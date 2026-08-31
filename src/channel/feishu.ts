@@ -150,19 +150,22 @@ export class FeishuChannel implements Channel {
 
         // Group chat filtering: only process if app is mentioned
         if (chatType === 'group') {
-          const normalizedAppName = this.config.appName?.trim();
-          const mentions = (message['mentions'] ?? []) as Array<
-            Record<string, unknown>
-          >;
-          const hasMention = mentions.length > 0;
+          // groupRequireMention=false 时处理群里所有消息
+          if (this.config.groupRequireMention !== false) {
+            const normalizedAppName = this.config.appName?.trim();
+            const mentions = (message['mentions'] ?? []) as Array<
+              Record<string, unknown>
+            >;
+            const hasMention = mentions.length > 0;
 
-          if (normalizedAppName) {
-            // 有 appName 配置时，检查消息中是否包含该名称
-            const stringifiedMessage = JSON.stringify(normalizedMessage);
-            if (!stringifiedMessage.includes(normalizedAppName)) return;
-          } else if (!hasMention) {
-            // 没有 appName 配置时，退化为检查是否有任何 @mention（即有人 @ 了机器人）
-            return;
+            if (normalizedAppName) {
+              // 有 appName 配置时，检查消息中是否包含该名称
+              const stringifiedMessage = JSON.stringify(normalizedMessage);
+              if (!stringifiedMessage.includes(normalizedAppName)) return;
+            } else if (!hasMention) {
+              // 没有 appName 配置时，退化为检查是否有任何 @mention（即有人 @ 了机器人）
+              return;
+            }
           }
         }
 

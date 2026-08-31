@@ -112,6 +112,102 @@ program
     console.log('✅ 更新完成！');
   });
 
+function getInjectEndpoint(workDir: string): {
+  baseUrl: string;
+  token?: string;
+} {
+  const config = loadConfig(workDir);
+  const inject = config.inject;
+  if (!inject) {
+    throw new Error(
+      'Inject channel 未配置，请在 config.json 中添加 "inject": { "port": 41008 } 并重启服务',
+    );
+  }
+  return {
+    baseUrl: `http://${inject.host ?? '127.0.0.1'}:${inject.port}`,
+    token: inject.token,
+  };
+}
+
+async function requestInject(
+  path: string,
+  workDir: string,
+  init?: RequestInit,
+): Promise<{ status: number; data: Record<string, unknown> }> {
+  const { baseUrl, token } = getInjectEndpoint(workDir);
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const res = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    headers: { ...headers, ...(init?.headers as Record<string, string>) },
+  });
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  return { status: res.status, data };
+}
+
+const sessionCmd = program.command('session').description('会话管理');
+
+sessionCmd
+  .command('list')
+  .description('列出当前活动会话（含 chatId 映射）')
+  .action(async () => {
+    const workDir = resolveWorkDir(program.opts().workDir);
+    try {
+      const { status, data } = await requestInject('/sessions', workDir);
+      if (status !== 200) {
+        console.error(JSON.stringify(data));
+        process.exit(1);
+      }
+      console.log(JSON.stringify(data, null, 2));
+    } catch (err) {
+      console.error(
+        '❌ 无法连接 Inject Channel（服务未启动或未配置 inject）:',
+        err instanceof Error ? err.message : err,
+      );
+      process.exit(1);
+    }
+  });
+
+program
+  .command('inject')
+  .description('向指定会话注入一条消息（复用该会话上下文，需要服务已启动）')
+  .option('--session <sessionKey>', '目标会话 Key（如 feishu_ou_xxx_1）')
+  .option('--chat-id <chatId>', '目标聊天 ID')
+  .requiredOption('--text <text>', '要注入的消息内容')
+  .option('--sender-id <senderId>', '发送者标识（默认 trigger）')
+  .action(async (opts) => {
+    const workDir = resolveWorkDir(program.opts().workDir);
+    const body: Record<string, string> = { text: opts.text };
+    if (opts.session) body.sessionKey = opts.session;
+    if (opts.chatId) body.chatId = opts.chatId;
+    if (opts.senderId) body.senderId = opts.senderId;
+    if (!body.sessionKey && !body.chatId) {
+      console.error('❌ 请提供 --session 或 --chat-id 之一');
+      process.exit(1);
+    }
+    try {
+      const { status, data } = await requestInject('/inject', workDir, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      if (status !== 200) {
+        console.error(JSON.stringify(data));
+        process.exit(1);
+      }
+      console.log(JSON.stringify(data, null, 2));
+    } catch (err) {
+      console.error(
+        '❌ 无法连接 Inject Channel（服务未启动或未配置 inject）:',
+        err instanceof Error ? err.message : err,
+      );
+      process.exit(1);
+    }
+  });
+
 const cronCmd = program.command('cron').description('管理定时任务');
 
 cronCmd
@@ -121,6 +217,10 @@ cronCmd
   .requiredOption('--schedule <schedule>', 'Cron 表达式 (5 字段)')
   .requiredOption('--prompt <prompt>', '触发时的提示词')
   .option('--chat-id <chatId>', '目标聊天 ID')
+  .option(
+    '--session <sessionKey>',
+    '目标会话 Key（复用该会话上下文而非新建会话）',
+  )
   .option('--one-shot', '执行一次后自动删除', false)
   .action(async (opts) => {
     const workDir = resolveWorkDir(program.opts().workDir);
@@ -131,6 +231,7 @@ cronCmd
       schedule: opts.schedule,
       prompt: opts.prompt,
       chatId: opts.chatId,
+      sessionKey: opts.session,
       oneShot: opts.oneShot,
     });
     if (result.success) {

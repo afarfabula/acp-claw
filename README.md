@@ -257,6 +257,13 @@ We welcome community contributions to bring more channels and features to life!
 | DingTalk | 🙏 Help Wanted | DingTalk robot webhook/stream |
 | WeChat Work | 🙏 Help Wanted | WeCom bot |
 
+### Same-Session Message Injection (session-inject)
+
+Inject externally triggered messages into an existing session over a local HTTP
+endpoint. The LLM reasons with the full session context and replies back to the
+same chat, as if the user had sent the message themselves. Great for monitors,
+alerts and condition-based reminders. See [tools/README.md](./tools/README.md).
+
 ### How to Add a Channel
 
 1. Create a new file under `src/channel/` (e.g., `src/channel/slack.ts`)

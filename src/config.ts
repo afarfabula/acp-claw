@@ -12,6 +12,8 @@ export interface FeishuChannelConfig {
   domain?: string;
   appName?: string;
   chatId?: string;
+  /** 群聊是否要求 @ 机器人（或包含 appName）才处理，默认 true；设为 false 则处理群里所有消息 */
+  groupRequireMention?: boolean;
 }
 
 export interface A2AChannelConfig {
@@ -20,11 +22,24 @@ export interface A2AChannelConfig {
   description: string;
 }
 
+export interface InjectChannelConfig {
+  /** 本地 HTTP 服务端口 */
+  port: number;
+  /** 监听地址，默认 127.0.0.1 */
+  host?: string;
+  /** 可选鉴权 token，请求时需带 Authorization: Bearer <token> */
+  token?: string;
+}
+
 export interface AcpClawConfig {
   defaultAgent: string;
   agents: Record<string, AgentConfig>;
   feishu?: FeishuChannelConfig;
   a2a?: A2AChannelConfig;
+  /** 同会话消息注入通道（本地 HTTP） */
+  inject?: InjectChannelConfig;
+  /** 会话隔离粒度：'user' = 同一用户跨聊天共享上下文（默认）；'chat' = 每个聊天独立会话 */
+  sessionMode?: 'user' | 'chat';
   sessionIdleTimeoutMs?: number;
   stateSaveIntervalMs?: number;
   forwardToolMessages?: boolean;
@@ -218,6 +233,9 @@ export function initWorkDir(workDir: string): AcpClawConfig {
       port: 41007,
       name: 'acp-claw',
       description: 'ACP Claw A2A Agent',
+    },
+    inject: {
+      port: 41008,
     },
     sessionIdleTimeoutMs: DEFAULT_CONFIG.sessionIdleTimeoutMs,
     stateSaveIntervalMs: DEFAULT_CONFIG.stateSaveIntervalMs,

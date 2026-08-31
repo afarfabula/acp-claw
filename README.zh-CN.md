@@ -256,6 +256,12 @@ npm test
 | 钉钉 | 🙏 期待共建 | 钉钉机器人 webhook/stream |
 | 企业微信 | 🙏 期待共建 | 企业微信机器人 |
 
+### 同会话消息注入（session-inject）
+
+支持通过本地 HTTP 接口把外部条件触发的消息注入到指定会话中，LLM 会带着该会话的
+完整上下文推理并把回复发回对应聊天，效果等同于「用户在这里发了一条消息」。
+适用于监控告警、条件提醒等需要主动发消息的场景。详见 [tools/README.md](./tools/README.md)。
+
 ### 如何贡献新 Channel
 
 1. 在 `src/channel/` 下新建文件（如 `src/channel/slack.ts`）

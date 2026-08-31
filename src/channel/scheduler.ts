@@ -1,3 +1,4 @@
+import { CronExpressionParser } from 'cron-parser';
 import {
   copyFileSync,
   existsSync,
@@ -8,9 +9,8 @@ import {
   watch,
   writeFileSync,
 } from 'fs';
-import { join } from 'path';
 import cron, { type ScheduledTask as CronJob } from 'node-cron';
-import { CronExpressionParser } from 'cron-parser';
+import { join } from 'path';
 import type { Channel, IncomingMessage } from '../types/channel.js';
 import type { MessageBus } from '../types/messages.js';
 
@@ -19,6 +19,8 @@ export interface ScheduledTask {
   schedule: string;
   prompt: string;
   chatId?: string;
+  /** 可选：把任务注入到指定会话（而不是新建 scheduler 会话） */
+  sessionKey?: string;
   channelName?: string;
   senderId?: string;
   oneShot: boolean;
@@ -105,6 +107,7 @@ export class SchedulerChannel implements Channel {
     schedule: string;
     prompt: string;
     chatId?: string;
+    sessionKey?: string;
     channelName?: string;
     senderId?: string;
     oneShot?: boolean;
@@ -131,6 +134,7 @@ export class SchedulerChannel implements Channel {
       schedule: params.schedule,
       prompt: params.prompt,
       chatId: params.chatId,
+      sessionKey: params.sessionKey,
       channelName: params.channelName,
       senderId: params.senderId,
       oneShot: params.oneShot ?? false,
@@ -238,7 +242,8 @@ export class SchedulerChannel implements Channel {
       raw: {
         taskName: task.name,
         isScheduledTask: true,
-        sourceChannel: task.channelName,
+        sourceChannel: task.channelName ?? (task.chatId ? 'feishu' : undefined),
+        sessionKey: task.sessionKey,
         senderId: task.senderId,
         oneShot: task.oneShot,
       },

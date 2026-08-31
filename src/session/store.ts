@@ -22,6 +22,8 @@ export interface ControllerState {
   lastActivityAt: number;
   activeSessions: string[];
   activeSessionMap?: Record<string, string>;
+  /** chatId → sessionKey 映射，用于按聊天 ID 定位会话 */
+  chatSessionMap?: Record<string, string>;
 }
 
 export class SessionStore {

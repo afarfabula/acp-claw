@@ -35,6 +35,11 @@ export {
   type FeishuMessage,
 } from './channel/feishu.js';
 export {
+  InjectChannel,
+  type InjectDispatchResult,
+  type InjectSessionInfo,
+} from './channel/inject.js';
+export {
   SchedulerChannel,
   type ScheduledTask,
 } from './channel/scheduler.js';
@@ -49,6 +54,7 @@ export {
   type AcpClawConfig,
   type AgentConfig,
   type FeishuChannelConfig,
+  type InjectChannelConfig,
   initWorkDir,
   loadConfig,
   loadFeishuConfigFromEnv,
