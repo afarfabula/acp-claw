@@ -106,6 +106,8 @@ export function loadConfig(workDir: string): AcpClawConfig {
       agents,
       feishu: parsed.feishu ?? loadFeishuConfigFromEnv(),
       a2a: parsed.a2a,
+      inject: parsed.inject,
+      sessionMode: parsed.sessionMode ?? 'user',
       sessionIdleTimeoutMs:
         parsed.sessionIdleTimeoutMs ?? DEFAULT_CONFIG.sessionIdleTimeoutMs,
       stateSaveIntervalMs:
