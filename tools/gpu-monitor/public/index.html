@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GPU 监控表盘</title>
+  <script src="/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --border: #262b36;
+      --text: #d8dee9;
+      --muted: #7b8494;
+      --green: #2ecc71;
+      --yellow: #f1c40f;
+      --red: #e74c3c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .controls button {
+      background: var(--border);
+      color: var(--text);
+      border: none;
+      border-radius: 6px;
+      padding: 6px 14px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .controls button.active { background: #3b82f6; color: #fff; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 500; }
+    .bar {
+      background: var(--border);
+      border-radius: 4px;
+      height: 10px;
+      width: 140px;
+      overflow: hidden;
+      display: inline-block;
+      vertical-align: middle;
+    }
+    .bar > div { height: 100%; border-radius: 4px; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 12px;
+    }
+    .badge.free { background: rgba(46, 204, 113, .18); color: var(--green); }
+    .badge.busy { background: rgba(231, 76, 60, .15); color: var(--red); }
+    .badge.pending { background: rgba(241, 196, 15, .15); color: var(--yellow); }
+    .chart-wrap { position: relative; height: 300px; }
+    .gpu-legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <h1>GPU 监控表盘</h1>
+  <div class="sub" id="status">加载中…</div>
+
+  <div class="panel">
+    <table>
+      <thead>
+        <tr>
+          <th>GPU</th>
+          <th>利用率</th>
+          <th>显存占用</th>
+          <th>温度</th>
+          <th>状态</th>
+        </tr>
+      </thead>
+      <tbody id="gpuRows"></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <div class="controls">
+      <strong style="font-size:13px;color:var(--muted)">时间范围</strong>
+      <button data-range="30">30 分钟</button>
+      <button data-range="60" class="active">1 小时</button>
+      <button data-range="360">6 小时</button>
+      <button data-range="1440">24 小时</button>
+    </div>
+    <div class="chart-wrap" style="margin-top:12px">
+      <canvas id="utilChart"></canvas>
+    </div>
+    <div class="gpu-legend" id="utilLegend">点击图例可显示/隐藏对应 GPU</div>
+  </div>
+
+  <div class="panel">
+    <div class="chart-wrap">
+      <canvas id="memChart"></canvas>
+    </div>
+  </div>
+
+  <script>
+    const GPU_COLORS = [
+      '#3b82f6', '#22c55e', '#f59e0b', '#ef4444',
+      '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16',
+    ];
+    const GPU_NAMES = Array.from({ length: 8 }, (_, i) => `GPU ${i}`);
+
+    const state = {
+      range: 60,
+      latest: null,
+      visible: new Set(GPU_NAMES),
+    };
+
+    const utilChart = new Chart(document.getElementById('utilChart'), {
+      type: 'line',
+      data: { labels: [], datasets: [] },
+      options: chartOptions('利用率 (%)', ' %'),
+    });
+    const memChart = new Chart(document.getElementById('memChart'), {
+      type: 'line',
+      data: { labels: [], datasets: [] },
+      options: chartOptions('显存占用 (GB)', ' GB'),
+    });
+
+    function chartOptions(label, suffix) {
+      return {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            display: true,
+            labels: { color: '#d8dee9', boxWidth: 12, filter: (item) => state.visible.has(item.text) },
+          },
+          title: { display: true, text: label, color: '#7b8494' },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y}${suffix}`,
+            },
+          },
+        },
+        scales: {
+          x: { ticks: { color: '#7b8494', maxTicksLimit: 8 }, grid: { color: '#262b36' } },
+          y: { ticks: { color: '#7b8494' }, grid: { color: '#262b36' } },
+        },
+      };
+    }
+
+    function makeDatasets(points, key, suffix) {
+      const labels = points.map((p) => timeLabel(p.ts));
+      return {
+        labels,
+        datasets: GPU_NAMES.map((name, i) => ({
+          label: name,
+          data: points.map((p) => (key === 'util' ? p.util[i] : +(p.mem[i] / 1024).toFixed(1))),
+          borderColor: GPU_COLORS[i],
+          backgroundColor: GPU_COLORS[i] + '22',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.2,
+          hidden: !state.visible.has(name),
+        })),
+      };
+    }
+
+    function timeLabel(ts) {
+      const d = new Date(ts);
+      return [d.getHours(), d.getMinutes()]
+        .map((n) => String(n).padStart(2, '0'))
+        .join(':');
+    }
+
+    function barWidth(pct) {
+      const color = pct >= 95 ? 'var(--red)' : pct >= 50 ? 'var(--yellow)' : 'var(--green)';
+      return `<div style="width:${Math.min(100, pct)}%;background:${color}"></div>`;
+    }
+
+    function renderLatest() {
+      const latest = state.latest;
+      if (!latest) return;
+      const tbody = document.getElementById('gpuRows');
+      tbody.innerHTML = '';
+      const freeIds = new Set(latest.freeNow);
+      for (const g of latest.gpus) {
+        const utilPct = Math.min(100, g.util);
+        const memPct = g.memTotalMiB ? Math.min(100, (g.memUsedMiB / g.memTotalMiB) * 100) : 0;
+        const status = freeIds.has(g.i)
+          ? '<span class="badge free">空闲</span>'
+          : g.freeSamples > 0
+            ? `<span class="badge pending">候选中 (${g.freeSamples}/6)</span>`
+            : '<span class="badge busy">占用中</span>';
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          `<td><b>GPU ${g.i}</b></td>` +
+          `<td><span class="bar">${barWidth(utilPct)}</span> <b>${g.util}%</b></td>` +
+          `<td><span class="bar">${barWidth(memPct)}</span> <b>${(g.memUsedMiB / 1024).toFixed(1)} / ${(g.memTotalMiB / 1024).toFixed(0)} GB</b></td>` +
+          `<td>${g.temp}°C</td>` +
+          `<td>${status}</td>`;
+        tbody.appendChild(tr);
+      }
+      document.getElementById('status').textContent =
+        `采样时间 ${timeLabel(latest.ts)} · 空闲卡：${latest.freeNow.length ? latest.freeNow.join(', ') : '无'}`;
+    }
+
+    function renderHistory(points) {
+      const util = makeDatasets(points, 'util');
+      utilChart.data = util;
+      utilChart.update();
+      const mem = makeDatasets(points, 'mem');
+      memChart.data = mem;
+      memChart.update();
+    }
+
+    async function refreshLatest() {
+      try {
+        const res = await fetch('/api/latest');
+        state.latest = await res.json();
+        renderLatest();
+      } catch {
+        document.getElementById('status').textContent = '⚠️ 无法连接后端服务';
+      }
+    }
+
+    async function refreshHistory() {
+      try {
+        const res = await fetch(`/api/history?minutes=${state.range}`);
+        const data = await res.json();
+        renderHistory(data.points);
+      } catch {
+        // 后端暂不可用时保持旧图
+      }
+    }
+
+    document.querySelectorAll('.controls button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.controls button').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.range = Number(btn.dataset.range);
+        refreshHistory();
+      });
+    });
+
+    utilChart.options.plugins.legend.onClick = (evt, item, legend) => {
+      const name = item.text;
+      if (state.visible.has(name)) {
+        state.visible.delete(name);
+        legend.chart.setDatasetVisibility(item.datasetIndex, false);
+      } else {
+        state.visible.add(name);
+        legend.chart.setDatasetVisibility(item.datasetIndex, true);
+      }
+      legend.chart.update();
+    };
+
+    refreshLatest();
+    refreshHistory();
+    setInterval(refreshLatest, 10000);
+    setInterval(refreshHistory, 30000);
+  </script>
+</body>
+</html>

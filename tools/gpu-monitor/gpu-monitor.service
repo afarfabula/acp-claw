@@ -1,0 +1,15 @@
+[Unit]
+Description=GPU monitor (nvidia-smi -> Feishu webhook + dashboard)
+After=network.target
+
+[Service]
+Type=simple
+User=quyanyi
+WorkingDirectory=/home_ext/quyanyi/acp-claw/tools/gpu-monitor
+ExecStart=/home/quyanyi/.local/bin/node service.mjs
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

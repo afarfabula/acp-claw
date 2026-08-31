@@ -10,6 +10,10 @@ dist/
 storybook-static
 doc_build/
 
+# GPU monitor secrets & data
+tools/gpu-monitor/config.json
+tools/gpu-monitor/data/
+
 # IDE
 .vscode/*
 !.vscode/extensions.json
