@@ -4,6 +4,7 @@
  *
  * - 每 30 秒采样一次 nvidia-smi（8 卡矩阵）
  * - 空闲卡判定：单卡 util < 5% 且 显存 < 5GB，连续 3 分钟 → 飞书群 webhook 提醒
+ * - 占用提醒：已提醒过空闲的卡被重新占用（连续约 3 分钟）→ 也发飞书提醒
  * - 历史数据按天写入 data/samples-YYYY-MM-DD.jsonl
  * - 内置 HTTP API + 浏览器表盘（默认 :8808）
  *
@@ -133,9 +134,16 @@ async function sendFreeAlert(gpus, ts) {
 }
 
 async function sendRecoverAlert(gpus, ts) {
-  const lines = gpus.map((g) => `• GPU ${g.i}：util ${g.util}% | 显存 ${fmtGb(g.memUsedMiB)}GB`);
+  const t = config.freeThreshold;
+  const minutes = Math.round((t.consecutiveSamples * config.intervalMs) / 60000);
+  const lines = gpus.map(
+    (g) =>
+      `• GPU ${g.i}：util ${g.util}% | 显存 ${fmtGb(g.memUsedMiB)}GB / ${fmtGb(g.memTotalMiB)}GB | ${g.temp}°C`,
+  );
   const text =
-    `🔴 占用恢复 ${hhmmss(ts)}\n以下 GPU 已不再空闲：\n` + lines.join('\n');
+    `🔴 占用提醒 ${hhmmss(ts)}\n` +
+    `以下 GPU 已连续被占用约 ${minutes} 分钟，不再空闲：\n` +
+    lines.join('\n');
   await sendWebhook(text);
   console.log(`[gpu-monitor] sent recover alert: GPU ${gpus.map((g) => g.i).join(',')}`);
 }
@@ -178,13 +186,16 @@ async function tick() {
       'utf-8',
     );
 
-    // 空闲卡状态机：连续满足条件才通知；通知后需变忙再空闲才能再次通知
+    // 空闲/占用状态机：
+    // - 空闲：连续满足条件才发空闲提醒；发过后需先变忙再空闲才能再发
+    // - 占用：仅对已发过空闲提醒的卡生效，连续占用达到阈值后发占用提醒
     const newlyFree = [];
     const recovered = [];
     for (const g of gpus) {
       const st = freeTrack.get(g.i) ?? { consecutive: 0, notified: false };
       if (isFree(g)) {
-        st.consecutive += 1;
+        st.consecutive = (st.consecutive ?? 0) + 1;
+        st.busyConsecutive = 0;
         if (
           st.consecutive >= config.freeThreshold.consecutiveSamples &&
           !st.notified
@@ -192,11 +203,18 @@ async function tick() {
           st.notified = true;
           newlyFree.push(g);
         }
-      } else {
-        if (st.notified && config.freeThreshold.notifyRecovered) {
+      } else if (st.notified && config.freeThreshold.notifyRecovered) {
+        // 已提醒过空闲的卡开始被占用：连续占用达到阈值后发占用提醒
+        st.consecutive = 0;
+        st.busyConsecutive = (st.busyConsecutive ?? 0) + 1;
+        if (st.busyConsecutive >= config.freeThreshold.consecutiveSamples) {
+          st.notified = false;
+          st.busyConsecutive = 0;
           recovered.push(g);
         }
+      } else {
         st.consecutive = 0;
+        st.busyConsecutive = 0;
         st.notified = false;
       }
       freeTrack.set(g.i, st);

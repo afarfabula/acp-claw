@@ -42,7 +42,7 @@ sudo systemctl enable --now gpu-monitor
 - `intervalMs`：采样间隔（默认 30s）
 - `freeThreshold`：空闲判定阈值；`consecutiveSamples` 表示连续几次采样后通知
   （30s × 6 = 3 分钟）
-- `notifyRecovered`：空闲卡重新被占用时是否再发一条「恢复」通知
+- `notifyRecovered`：已提醒过空闲的卡被重新占用（连续占用约 3 分钟）时，再发一条「占用提醒」
 - `server.host/port`：表盘 HTTP 服务；默认监听 0.0.0.0，内网可访问
 
 > webhook 地址视为密钥，`config.json` 已被 gitignore，仓库里只保留
