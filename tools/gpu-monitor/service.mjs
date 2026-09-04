@@ -4,7 +4,7 @@
  *
  * - 每 30 秒采样一次 nvidia-smi（8 卡矩阵）
  * - 空闲卡判定：单卡 util < 5% 且 显存 < 5GB，连续 3 分钟 → 飞书群 webhook 提醒
- * - 占用提醒：已提醒过空闲的卡被重新占用（连续约 3 分钟）→ 也发飞书提醒
+ * - 占用提醒：已提醒过空闲的卡被重新占用（连续约 3 分钟）→ 发飞书提醒，并附上占用者的用户名和进程命令行
  * - 历史数据按天写入 data/samples-YYYY-MM-DD.jsonl
  * - 内置 HTTP API + 浏览器表盘（默认 :8808）
  *
@@ -12,6 +12,7 @@
  *   node service.mjs            # 常驻运行（采样 + 提醒 + API）
  *   node service.mjs --once     # 只采样一次并输出 JSON
  *   node service.mjs --test-notify  # 发送一条测试 webhook 消息
+ *   node service.mjs --owners   # 打印当前各卡的占用者（不发送消息）
  */
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -55,6 +56,23 @@ let lastSample = null;
 let lastError = null;
 let freeTrack = new Map();
 
+function loadUidToUser() {
+  const map = new Map();
+  try {
+    for (const line of readFileSync('/etc/passwd', 'utf-8').split('\n')) {
+      const parts = line.split(':');
+      if (parts.length >= 3 && /^\d+$/.test(parts[2])) {
+        map.set(parts[2], parts[0]);
+      }
+    }
+  } catch {
+    // passwd 不可读时退回 uid 显示
+  }
+  return map;
+}
+
+const uidToUser = loadUidToUser();
+
 function localDateStr(ts) {
   const d = new Date(ts);
   const y = d.getFullYear();
@@ -76,6 +94,63 @@ function hhmmss(ts) {
 
 function fmtGb(miB) {
   return (miB / 1024).toFixed(1);
+}
+
+function procUser(pid) {
+  try {
+    const status = readFileSync(`/proc/${pid}/status`, 'utf-8');
+    const m = status.match(/^Uid:\s*(\d+)/m);
+    if (m) return uidToUser.get(m[1]) ?? `uid${m[1]}`;
+  } catch {
+    // 进程可能已退出或不可读
+  }
+  return 'unknown';
+}
+
+function procCmdline(pid) {
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, 'utf-8')
+      .split('\0')
+      .filter(Boolean)
+      .join(' ');
+  } catch {
+    return '';
+  }
+}
+
+async function describeGpuOwners(gpuIndexes) {
+  const owners = new Map();
+  if (gpuIndexes.length === 0) return owners;
+  try {
+    const [gpuOut, appOut] = await Promise.all([
+      execFileAsync('nvidia-smi', [
+        '--query-gpu=index,uuid',
+        '--format=csv,noheader,nounits',
+      ]),
+      execFileAsync('nvidia-smi', [
+        '--query-compute-apps=gpu_uuid,pid,used_memory,process_name',
+        '--format=csv,noheader,nounits',
+      ]),
+    ]);
+    const idxByUuid = new Map();
+    for (const line of gpuOut.stdout.trim().split('\n').filter(Boolean)) {
+      const [i, uuid] = line.split(',').map((s) => s.trim());
+      idxByUuid.set(uuid, Number(i));
+    }
+    const want = new Set(gpuIndexes);
+    for (const line of appOut.stdout.trim().split('\n').filter(Boolean)) {
+      const [uuid, pid, mem, name] = line.split(',').map((s) => s.trim());
+      const idx = idxByUuid.get(uuid);
+      if (idx === undefined || !want.has(idx)) continue;
+      const user = procUser(pid);
+      const cmd = procCmdline(pid) || name;
+      if (!owners.has(idx)) owners.set(idx, []);
+      owners.get(idx).push({ user, cmd, memMiB: Number(mem) || 0 });
+    }
+  } catch (err) {
+    console.error(`[gpu-monitor] describe owners failed: ${err}`);
+  }
+  return owners;
 }
 
 async function sampleGpus() {
@@ -136,10 +211,27 @@ async function sendFreeAlert(gpus, ts) {
 async function sendRecoverAlert(gpus, ts) {
   const t = config.freeThreshold;
   const minutes = Math.round((t.consecutiveSamples * config.intervalMs) / 60000);
-  const lines = gpus.map(
-    (g) =>
+  const owners = await describeGpuOwners(gpus.map((g) => g.i));
+  const lines = [];
+  for (const g of gpus) {
+    lines.push(
       `• GPU ${g.i}：util ${g.util}% | 显存 ${fmtGb(g.memUsedMiB)}GB / ${fmtGb(g.memTotalMiB)}GB | ${g.temp}°C`,
-  );
+    );
+    const byUser = new Map();
+    for (const p of owners.get(g.i) ?? []) {
+      if (!byUser.has(p.user)) byUser.set(p.user, []);
+      byUser.get(p.user).push(p);
+    }
+    if (byUser.size === 0) {
+      lines.push('  👤 未能识别占用者');
+    }
+    for (const [user, procs] of byUser) {
+      const count = procs.length > 1 ? `（${procs.length} 个进程）` : '';
+      const cmd = (procs[0]?.cmd ?? '').trim();
+      const shown = cmd.length > 150 ? `${cmd.slice(0, 150)}…` : cmd;
+      lines.push(`  👤 ${user}${count}: ${shown}`);
+    }
+  }
   const text =
     `🔴 占用提醒 ${hhmmss(ts)}\n` +
     `以下 GPU 已连续被占用约 ${minutes} 分钟，不再空闲：\n` +
@@ -407,6 +499,20 @@ async function main() {
       `🧪 GPU 监控测试消息 ${hhmmss(Date.now())}\n服务已启动，空闲卡提醒功能就绪。`,
     );
     console.log('test webhook sent');
+    return;
+  }
+
+  if (args.includes('--owners')) {
+    const gpus = await sampleGpus();
+    const busy = gpus.filter((g) => !isFree(g));
+    const owners = await describeGpuOwners(busy.map((g) => g.i));
+    for (const g of busy) {
+      console.log(`GPU ${g.i}: util=${g.util}% mem=${fmtGb(g.memUsedMiB)}GB`);
+      for (const p of owners.get(g.i) ?? []) {
+        const cmd = p.cmd.length > 160 ? `${p.cmd.slice(0, 160)}…` : p.cmd;
+        console.log(`  ${p.user}: ${cmd}`);
+      }
+    }
     return;
   }
 
