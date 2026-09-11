@@ -264,6 +264,15 @@ endpoint. The LLM reasons with the full session context and replies back to the
 same chat, as if the user had sent the message themselves. Great for monitors,
 alerts and condition-based reminders. See [tools/README.md](./tools/README.md).
 
+### Feishu Docs Tool (feishu-doc)
+
+Lets the agent read and edit Feishu/Lark cloud docs and wikis as either the app
+or the user: read, create, append Markdown, patch individual blocks, export
+tables, search wikis and bulk-reorganize the doc tree. Companion skill lives in
+[`skills/feishu-doc/SKILL.md`](./skills/feishu-doc/SKILL.md); usage and scopes are
+documented in [`tools/feishu-doc/README.md`](./tools/feishu-doc/README.md).
+An unofficial add-on (GPU monitor) lives in [`tools/gpu-monitor`](./tools/gpu-monitor).
+
 ### How to Add a Channel
 
 1. Create a new file under `src/channel/` (e.g., `src/channel/slack.ts`)

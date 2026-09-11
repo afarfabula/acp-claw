@@ -262,6 +262,14 @@ npm test
 完整上下文推理并把回复发回对应聊天，效果等同于「用户在这里发了一条消息」。
 适用于监控告警、条件提醒等需要主动发消息的场景。详见 [tools/README.md](./tools/README.md)。
 
+### 飞书云文档工具（feishu-doc）
+
+让 agent 以用户身份或应用身份读写飞书云文档与知识库：读取 / 创建 / 追加 Markdown /
+定点修改块 / 导出表格 / 搜索知识库 / 批量重组目录。配套 skill 放在
+[`skills/feishu-doc/SKILL.md`](./skills/feishu-doc/SKILL.md)，
+用法与权限说明见 [`tools/feishu-doc/README.md`](./tools/feishu-doc/README.md)。
+非官方补充工具（GPU 监控）见 [`tools/gpu-monitor`](./tools/gpu-monitor)。
+
 ### 如何贡献新 Channel
 
 1. 在 `src/channel/` 下新建文件（如 `src/channel/slack.ts`）
