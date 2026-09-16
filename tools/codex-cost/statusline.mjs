@@ -10,7 +10,7 @@
 import { basename } from 'node:path';
 
 import { DEFAULT_MODEL, formatCny, formatTokens } from './pricing.mjs';
-import { parseRollout } from './usage.mjs';
+import { lastRound, parseRollout } from './usage.mjs';
 
 const RESET = '\u001b[0m';
 const DIM = '\u001b[2m';
@@ -61,6 +61,8 @@ async function main() {
 
   const turns = session.turns;
   const last = turns.at(-1);
+  const round = lastRound(session);
+  const roundCost = round.turns.reduce((sum, turn) => sum + turn.cost, 0);
   const sessionCost = turns.reduce((sum, turn) => sum + turn.cost, 0);
   const sessionTokens = turns.reduce(
     (sum, turn) => sum + turn.usage.input + turn.usage.output,
@@ -73,9 +75,15 @@ async function main() {
   const contextWindow = session.contextWindow ?? 0;
   const usedRatio = contextWindow > 0 ? last.usage.input / contextWindow : 0;
 
+  // 「本回合」= 这次提问引发的全部请求（含中间的工具调用轮），与两次状态栏之间
+  // 「会话」的增量对得上；没有回合边界时退回「本轮」= 最后一次请求。
+  const roundPart = round.isComplete
+    ? `${DIM}本回合${RESET} ${color(PEACH, formatCny(roundCost))} ${DIM}(${round.turns.length} 次请求)${RESET}`
+    : `${DIM}本轮${RESET} ${color(PEACH, formatCny(last.cost))}`;
+
   const line1 = [
     color(GREEN, `[${project}]`),
-    `${DIM}本轮${RESET} ${color(PEACH, formatCny(last.cost))}`,
+    roundPart,
     `${DIM}会话${RESET} ${color(PINK, formatCny(sessionCost))}`,
     `${DIM}累计${RESET} ${formatTokens(sessionTokens)} tok`,
     `${DIM}${model}${RESET}`,

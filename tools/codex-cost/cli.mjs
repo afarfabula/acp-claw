@@ -33,6 +33,7 @@ import {
 import {
   collectTurns,
   defaultCodexHome,
+  lastRound,
   parseRollout,
   summarize,
 } from './usage.mjs';
@@ -79,10 +80,15 @@ function previewStatusline(codexHome) {
   }
   const parsed = parseRollout(lastSession[1].file);
   const last = parsed.turns.at(-1);
+  const round = lastRound(parsed);
+  const roundCost = round.turns.reduce((sum, turn) => sum + turn.cost, 0);
   const total = summarize(parsed.turns);
+  const roundText = round.isComplete
+    ? `本回合 ${formatCny(roundCost)}（${round.turns.length} 次请求）`
+    : `本轮 ${formatCny(last?.cost ?? 0)}（单次请求）`;
   process.stdout.write(
-    `会话 ${parsed.sessionId ?? '-'}  文件 ${parsed.file}\n` +
-      `  本轮 ${formatCny(last?.cost ?? 0)}  会话合计 ${formatCny(total.cost)}  ` +
+    `会话 ${parsed.sessionId ?? '-'}  文件 ${lastSession[1].file}\n` +
+      `  ${roundText}  会话合计 ${formatCny(total.cost)}  ` +
       `输入 ${formatTokens(total.input)} tok（命中 ${(total.cachedRatio * 100).toFixed(1)}%）  输出 ${formatTokens(total.output)} tok\n` +
       `  共 ${turns.length} 轮（全部会话）\n`,
   );

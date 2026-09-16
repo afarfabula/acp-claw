@@ -58,6 +58,7 @@ export function parseRollout(file) {
   let model = null;
   let contextWindow = null;
   const turns = [];
+  const roundStarts = [];
 
   for (const line of raw.split('\n')) {
     if (!line) continue;
@@ -78,6 +79,11 @@ export function parseRollout(file) {
     }
     if (event.type !== 'event_msg') continue;
     const payload = event.payload;
+    // 回合边界：一次用户输入 = 一条 task_started，其后所有 token_count 同属该回合
+    if (payload?.type === 'task_started') {
+      roundStarts.push(event.timestamp);
+      continue;
+    }
     if (payload?.type !== 'token_count') continue;
     const usage = payload.info?.last_token_usage;
     if (!usage) continue;
@@ -105,7 +111,29 @@ export function parseRollout(file) {
     });
   }
 
-  return { sessionId, cwd, model, contextWindow, turns };
+  return { sessionId, cwd, model, contextWindow, turns, roundStarts };
+}
+
+/**
+ * 最后一个「回合」的请求集合。
+ *
+ * 一次用户输入（一个回合）会引发多次请求：模型 → 工具调用 → 模型 → … → 最终回答，
+ * 每次都要重发上下文并单独计费。Codex 在每回合开头写一条 task_started，
+ * 所以「本回合花费」应是最后一次 task_started 之后全部 token_count 之和。
+ *
+ * 老会话没有 task_started 记录时退回最后一次请求，并以 isComplete=false 标记
+ * （此时只能当「本轮/最后一次请求」看，不能当回合花费看）。
+ */
+export function lastRound(parsed) {
+  const turns = parsed?.turns ?? [];
+  if (!turns.length) return { turns: [], isComplete: false };
+  const starts = parsed?.roundStarts ?? [];
+  const start = starts.length ? starts[starts.length - 1] : null;
+  const fallback = { turns: [turns[turns.length - 1]], isComplete: false };
+  if (!start) return fallback;
+  const startMs = new Date(start).getTime();
+  const inRound = turns.filter((t) => new Date(t.timestamp).getTime() >= startMs);
+  return inRound.length ? { turns: inRound, isComplete: true } : fallback;
 }
 
 /** 收集一段时间内的所有轮次（按事件时间过滤） */
