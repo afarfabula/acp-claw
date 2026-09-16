@@ -13,7 +13,13 @@ export interface IncomingMessage {
   chatType?: 'p2p' | 'group';
   timestamp: number;
   raw?: unknown;
-  files?: Array<{ uri?: string; bytes?: string; mimeType?: string }>;
+  /** 附件（图片等）。bytes 为 base64，由渠道负责下载 */
+  files?: Array<{
+    uri?: string;
+    bytes?: string;
+    mimeType?: string;
+    name?: string;
+  }>;
   replyMeta?: {
     selfId: string;
     replyTo: string;

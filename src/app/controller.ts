@@ -146,6 +146,7 @@ export class Controller {
             senderId: msg.sender.id,
             chatId: msg.chatId,
             chatType: msg.chatType,
+            files: msg.files,
           },
           channel: 'feishu',
           sessionKey,

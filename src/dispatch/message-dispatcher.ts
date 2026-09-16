@@ -85,6 +85,8 @@ export class MessageDispatcher {
     }, ttlMs);
     timer.unref?.();
     this.closeTimers.set(sessionKey, timer);
+    // 在保留窗口内保护该会话，避免被空闲回收提前关掉
+    this.sessionManager.protectSession(sessionKey, Date.now() + ttlMs);
     this.logger.info(
       'session',
       `[${sessionKey}] kept alive for ${Math.round(ttlMs / 60000)}min after scheduled run`,
@@ -148,6 +150,12 @@ export class MessageDispatcher {
           .trim();
       }
 
+      // 附件（图片）提示：让模型知道后面跟着图片块
+      const attachments = msg.files ?? [];
+      if (attachments.length > 0) {
+        text = `[附带 ${attachments.length} 张图片] ${text}`;
+      }
+
       const existingSession = this.sessionManager.getSession(sessionKey);
       if (existingSession?.busy) {
         console.log(
@@ -171,11 +179,13 @@ export class MessageDispatcher {
         const promptText = initGuidance
           ? `${initGuidance}\n\n---\n\n${userMsg}`
           : userMsg;
-        parts = buildPrompt(promptText, filePaths);
+        parts = buildPrompt(promptText, filePaths, attachments);
         session.isNew = false;
       } else {
         parts = buildPrompt(
           formatUserMessage(payload.channel, msg.senderId, text),
+          undefined,
+          attachments,
         );
       }
 

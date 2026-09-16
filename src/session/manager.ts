@@ -293,6 +293,17 @@ export class SessionManager {
   }
 
   private idleSweeper: ReturnType<typeof setInterval> | null = null;
+  /** sessionKey → 保护截止时间（定时任务保留窗口内的会话不被空闲回收） */
+  private protection = new Map<string, number>();
+
+  /** 在 untilTs 之前保护该会话，空闲回收会跳过它 */
+  protectSession(sessionKey: string, untilTs: number): void {
+    this.protection.set(sessionKey, untilTs);
+  }
+
+  unprotectSession(sessionKey: string): void {
+    this.protection.delete(sessionKey);
+  }
 
   /**
    * 定期回收长时间无活动的会话（进程关掉、记录删除），
@@ -320,6 +331,9 @@ export class SessionManager {
     const now = Date.now();
     for (const [key, session] of [...this.sessions.entries()]) {
       if (session.busy) continue;
+      const protectedUntil = this.protection.get(key);
+      if (protectedUntil && protectedUntil > now) continue;
+      if (protectedUntil) this.protection.delete(key);
       if (now - session.record.lastActivityAt < timeout) continue;
       console.log(
         `[session] idle > ${Math.round(timeout / 60000)}min, closing ${key}`,

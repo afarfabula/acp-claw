@@ -7,6 +7,12 @@ export interface ControllerEvents {
       chatId?: string;
       chatType?: 'p2p' | 'group';
       raw?: unknown;
+      files?: Array<{
+        uri?: string;
+        bytes?: string;
+        mimeType?: string;
+        name?: string;
+      }>;
     };
     channel: string;
     sessionKey: string;

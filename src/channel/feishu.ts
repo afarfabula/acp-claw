@@ -18,6 +18,29 @@ export type MessageHandler = (message: FeishuMessage) => void | Promise<void>;
 
 const WORKING_EMOJI_TYPE = 'OnIt';
 
+/** 从消息内容里递归找出所有 image_key（兼容 image 单图与 post 富文本） */
+function extractImageKeys(content: string): string[] {
+  const keys = new Set<string>();
+  const walk = (node: unknown): void => {
+    if (!node) return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (typeof node === 'object') {
+      const obj = node as Record<string, unknown>;
+      if (typeof obj.image_key === 'string') keys.add(obj.image_key);
+      for (const value of Object.values(obj)) walk(value);
+    }
+  };
+  try {
+    walk(JSON.parse(content));
+  } catch {
+    // 非 JSON 内容，忽略
+  }
+  return [...keys];
+}
+
 export class FeishuChannel implements Channel {
   readonly name = 'feishu';
   private wsClient: Lark.WSClient;
@@ -65,6 +88,54 @@ export class FeishuChannel implements Channel {
 
   onMessage(handler: (message: IncomingMessage) => void): void {
     this.handler = handler;
+  }
+
+  /**
+   * 下载消息里的图片，转成 base64 附件（供模型直接看图）。
+   * 飞书消息内图片必须用 message_id + image_key 取资源。
+   */
+  private async fetchImages(
+    messageId: string,
+    content: string,
+    limit = 4,
+  ): Promise<
+    Array<{ bytes: string; mimeType: string; name: string }>
+  > {
+    const keys = extractImageKeys(content).slice(0, limit);
+    if (!keys.length) return [];
+    const files: Array<{ bytes: string; mimeType: string; name: string }> = [];
+    for (const [index, imageKey] of keys.entries()) {
+      try {
+        const res = await this.apiClient.im.v1.messageResource.get({
+          path: { message_id: messageId, file_key: imageKey },
+          params: { type: 'image' },
+        });
+        const stream = res.getReadableStream();
+        const chunks: Buffer[] = [];
+        for await (const chunk of stream) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        const buffer = Buffer.concat(chunks);
+        if (!buffer.length) continue;
+        const contentType = String(res.headers?.['content-type'] ?? '');
+        const mimeType = contentType.startsWith('image/')
+          ? contentType.split(';')[0]
+          : 'image/png';
+        files.push({
+          bytes: buffer.toString('base64'),
+          mimeType,
+          name: `feishu-image-${index + 1}`,
+        });
+        console.log(
+          `[feishu] downloaded image ${imageKey} (${buffer.length} bytes, ${mimeType})`,
+        );
+      } catch (err) {
+        console.warn(
+          `[feishu] download image ${imageKey} failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    return files;
   }
 
   async reply(messageId: string, text: string): Promise<void> {
@@ -181,6 +252,7 @@ export class FeishuChannel implements Channel {
           typeof normalizedMessage['content'] === 'string'
             ? normalizedMessage['content']
             : '';
+        const files = await this.fetchImages(messageId, msgContent);
         const chatIdValue =
           typeof normalizedMessage['chat_id'] === 'string'
             ? normalizedMessage['chat_id']
@@ -197,6 +269,7 @@ export class FeishuChannel implements Channel {
             chatType === 'p2p' || chatType === 'group' ? chatType : undefined,
           timestamp: Date.now(),
           raw: { ...rawData, message: normalizedMessage },
+          files: files.length ? files : undefined,
         };
 
         Promise.resolve(this.handler?.(incoming)).catch((err) => {
