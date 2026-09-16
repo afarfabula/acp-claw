@@ -49,6 +49,17 @@ export interface AcpClawConfig {
   stateSaveIntervalMs?: number;
   forwardToolMessages?: boolean;
   language?: 'zh' | 'en';
+  /**
+   * 回合结束后在回复末尾追加一行人民币花费（默认关闭）。
+   * 花费按 DeepSeek 官方价（含峰谷、缓存命中）从 Codex 会话记录里算。
+   */
+  replyCost?: {
+    enabled?: boolean;
+    /** 生效的通道，默认 ['feishu']（A2A/inject 等通道不带这行，避免污染协议） */
+    channels?: string[];
+    /** 会话记录根目录，默认取 $CODEX_HOME 或 ~/.codex */
+    codexHome?: string;
+  };
   reflexion?: {
     enabled: boolean;
     promptTemplate?: string;
@@ -118,6 +129,7 @@ export function loadConfig(workDir: string): AcpClawConfig {
       stateSaveIntervalMs:
         parsed.stateSaveIntervalMs ?? DEFAULT_CONFIG.stateSaveIntervalMs,
       language: parsed.language ?? 'zh',
+      replyCost: parsed.replyCost,
       reflexion: parsed.reflexion,
     };
   } catch {

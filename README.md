@@ -216,6 +216,20 @@ ACP Claw uses a YAML configuration file located at `.acp-claw/config.yaml`:
 | `session.memory` | boolean | Enable memory system |
 | `session.max_history` | number | Max messages to keep in session |
 
+### Per-turn cost line (`replyCost`)
+
+Off by default. Enable it in `config.json` to append a CNY cost line after each turn:
+
+```json
+{ "replyCost": { "enabled": true } }
+```
+
+Renders as `💸 本回合 ¥0.078（4 次请求 · 缓存命中 99.5% · 高峰）` where "本回合" is the whole turn
+(one answer often costs several requests: model → tool → model → …), priced with DeepSeek's official
+RMB rates including peak/off-peak and cache-hit pricing. Data comes from the Codex session transcript
+(`$CODEX_HOME/sessions/**/rollout-*.jsonl`, located by the session's thread id). Failures are silent —
+the reply is never blocked by cost accounting. `replyCost.channels` defaults to `["feishu"]`.
+
 ---
 
 ## Development

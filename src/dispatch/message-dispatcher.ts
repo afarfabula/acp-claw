@@ -2,14 +2,18 @@ import { buildPrompt, formatUserMessage } from '../acp/prompt-builder.js';
 import { handleCommand } from '../commands/handlers.js';
 import type { Lang } from '../commands/i18n.js';
 import { parseSlashCommand } from '../commands/parser.js';
-import type { MessageBus } from '../infra/message-bus.js';
 import type { AcpClawConfig } from '../config.js';
+import { buildRoundCostLine } from '../cost/session-cost.js';
+import {
+  buildInitGuidance,
+  buildInitialContext,
+} from '../infra/context-builder.js';
+import type { EventBus } from '../infra/event-bus.js';
+import type { MessageBus } from '../infra/message-bus.js';
 import type { Logger } from '../logger.js';
+import { PromptPipeline } from '../pipeline/pipeline.js';
 import type { SessionManager } from '../session/manager.js';
 import type { ControllerEvents } from '../types/events.js';
-import type { EventBus } from '../infra/event-bus.js';
-import { PromptPipeline } from '../pipeline/pipeline.js';
-import { buildInitialContext, buildInitGuidance } from '../infra/context-builder.js';
 
 export class MessageDispatcher {
   private eventBus: EventBus;
@@ -133,6 +137,38 @@ export class MessageDispatcher {
     }
   }
 
+  /**
+   * 回合结束后，按 Codex 会话记录算本回合花费并追加一行。
+   * 由 config.replyCost 控制（默认关闭），算不出来就静默跳过。
+   */
+  private async publishRoundCost(
+    outputChannel: string,
+    sessionKey: string,
+    msg: { id?: string; chatId?: string },
+    payloadChannel: string,
+  ): Promise<void> {
+    const cfg = this.config.replyCost;
+    if (!cfg?.enabled) return;
+    const channels = cfg.channels ?? ['feishu'];
+    if (!channels.includes(payloadChannel)) return;
+
+    const sessionId =
+      this.sessionManager.getSession(sessionKey)?.record.acpSessionId;
+    if (!sessionId) return;
+
+    try {
+      const line = buildRoundCostLine(sessionId, cfg.codexHome);
+      if (!line) return;
+      this.logger.info('cost', `[${sessionKey}] ${line}`);
+      await this.publishReply(outputChannel, msg, line);
+    } catch (err) {
+      this.logger.warn('cost', 'compute round cost failed', {
+        sessionKey,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   private async handleMessage(
     payload: ControllerEvents['message-arrived'],
   ): Promise<void> {
@@ -239,22 +275,37 @@ export class MessageDispatcher {
       if (expectReplay) {
         session.expectReplay = false; // 仅第一次 prompt 后 replay
       }
-      const result = await this.pipeline.execute(sessionKey, parts, {
-        onText: async (chunk) => {
-          console.log(`📝 [agent] ${chunk}`);
-          this.logger.info('agent-text-complete', chunk);
-          await this.publishReply(outputChannel, msg, chunk);
-        },
-        onTool: async (toolLog) => {
-          console.log(`🔧 [tool] ${toolLog}`);
-          this.logger.info('agent-tool', `[${sessionKey}] ${toolLog}`);
+      const result = await this.pipeline.execute(
+        sessionKey,
+        parts,
+        {
+          onText: async (chunk) => {
+            console.log(`📝 [agent] ${chunk}`);
+            this.logger.info('agent-text-complete', chunk);
+            await this.publishReply(outputChannel, msg, chunk);
+          },
+          onTool: async (toolLog) => {
+            console.log(`🔧 [tool] ${toolLog}`);
+            this.logger.info('agent-tool', `[${sessionKey}] ${toolLog}`);
 
-          if (this.config.forwardToolMessages) {
-            const toolMsg = `🔧 工具调用: ${toolLog}`;
-            void this.publishReply(outputChannel, msg, toolMsg);
-          }
+            if (this.config.forwardToolMessages) {
+              const toolMsg = `🔧 工具调用: ${toolLog}`;
+              void this.publishReply(outputChannel, msg, toolMsg);
+            }
+          },
         },
-      }, { expectReplay });
+        { expectReplay },
+      );
+
+      // 回合结束后追加一行本回合花费（config.replyCost 控制，默认关闭）
+      if (result.hasSentMessage) {
+        await this.publishRoundCost(
+          outputChannel,
+          sessionKey,
+          msg,
+          payload.channel,
+        );
+      }
 
       if (result.hasSentMessage && msg.id && payload.channel === 'feishu') {
         await this.messageBus.publish({
