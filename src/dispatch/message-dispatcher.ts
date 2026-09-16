@@ -93,6 +93,46 @@ export class MessageDispatcher {
     );
   }
 
+  /**
+   * 定时任务等本地来源的 message id 是合成 id（如 scheduled_每日简报_123），
+   * 不是飞书的 open_message_id，拿去调 reply 接口必然失败（99992354）。
+   * 这里只把真正的远端消息 id 透传为 messageId，其余一律带 chatId 走直发。
+   */
+  private resolveReplyTarget(msg: { id?: string; chatId?: string }): {
+    messageId?: string;
+    chatId?: string;
+  } {
+    const id = msg.id;
+    const isLocalSyntheticId =
+      typeof id === 'string' && id.startsWith('scheduled_');
+    return {
+      messageId: id && !isLocalSyntheticId ? id : undefined,
+      chatId: msg.chatId,
+    };
+  }
+
+  /** 统一回复出口：失败写日志，避免消息静默丢失 */
+  private async publishReply(
+    channelName: string,
+    msg: { id?: string; chatId?: string },
+    content: string,
+  ): Promise<void> {
+    const target = this.resolveReplyTarget(msg);
+    if (!target.messageId && !target.chatId) return;
+    const result = await this.messageBus.publish({
+      channelName,
+      ...target,
+      type: 'text',
+      content,
+    });
+    if (!result.success) {
+      this.logger.warn(
+        'dispatch',
+        `publish to "${channelName}" failed: ${result.error ?? 'unknown error'}`,
+      );
+    }
+  }
+
   private async handleMessage(
     payload: ControllerEvents['message-arrived'],
   ): Promise<void> {
@@ -203,21 +243,7 @@ export class MessageDispatcher {
         onText: async (chunk) => {
           console.log(`📝 [agent] ${chunk}`);
           this.logger.info('agent-text-complete', chunk);
-          if (msg.id) {
-            await this.messageBus.publish({
-              channelName: outputChannel,
-              messageId: msg.id,
-              type: 'text',
-              content: chunk,
-            });
-          } else if (msg.chatId) {
-            await this.messageBus.publish({
-              channelName: outputChannel,
-              chatId: msg.chatId,
-              type: 'text',
-              content: chunk,
-            });
-          }
+          await this.publishReply(outputChannel, msg, chunk);
         },
         onTool: async (toolLog) => {
           console.log(`🔧 [tool] ${toolLog}`);
@@ -225,13 +251,7 @@ export class MessageDispatcher {
 
           if (this.config.forwardToolMessages) {
             const toolMsg = `🔧 工具调用: ${toolLog}`;
-            this.messageBus.publish({
-              channelName: outputChannel,
-              messageId: msg.id || undefined,
-              chatId: msg.chatId,
-              type: 'text',
-              content: toolMsg,
-            }).catch(() => {});
+            void this.publishReply(outputChannel, msg, toolMsg);
           }
         },
       }, { expectReplay });
@@ -279,12 +299,7 @@ export class MessageDispatcher {
       console.error(`❌ Error handling message:`, errMsg);
       this.logger.error('error', `[${sessionKey}] ${errMsg}`);
       if (msg.id) {
-        await this.messageBus.publish({
-          channelName: outputChannel,
-          messageId: msg.id,
-          type: 'text',
-          content: `❌ 处理失败: ${errMsg}`,
-        });
+        await this.publishReply(outputChannel, msg, `❌ 处理失败: ${errMsg}`);
       }
       // Ensure A2A SSE stream is closed on error
       if (payload.channel === 'a2a') {

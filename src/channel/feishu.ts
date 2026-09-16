@@ -41,6 +41,15 @@ function extractImageKeys(content: string): string[] {
   return [...keys];
 }
 
+/**
+ * 只有真实的 open_message_id（om_ / omt_）才能调 reply 接口。
+ * 定时任务等本地来源用的是合成 id（如 scheduled_每日简报_123），
+ * reply 会直接报 99992354，必须改走 chatId 直发。
+ */
+function isOpenMessageId(id: string | undefined): id is string {
+  return typeof id === 'string' && (id.startsWith('om_') || id.startsWith('omt_'));
+}
+
 export class FeishuChannel implements Channel {
   readonly name = 'feishu';
   private wsClient: Lark.WSClient;
@@ -181,13 +190,18 @@ export class FeishuChannel implements Channel {
         await this.clearReaction(msg.messageId);
         return { success: true };
       }
-      if (msg.messageId) {
+      if (isOpenMessageId(msg.messageId)) {
         await this.reply(msg.messageId, msg.content);
         return { success: true, messageId: msg.messageId };
       }
       if (msg.chatId) {
         await this.send(msg.chatId, msg.content);
         return { success: true };
+      }
+      // 没有 chatId 兜底时才尝试 reply（合成 id 会失败，由调用方记录日志）
+      if (msg.messageId) {
+        await this.reply(msg.messageId, msg.content);
+        return { success: true, messageId: msg.messageId };
       }
       return { success: false, error: 'No messageId or chatId provided' };
     } catch (error) {
