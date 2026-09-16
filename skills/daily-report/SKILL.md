@@ -69,9 +69,10 @@ prompt 模板（保持简短，细节交给 skill 与脚本）：
 
 ## 日报流程（模型侧步骤）
 
-1. 运行 `node $CLI collect`，拿到素材 Markdown（含天气表、余额、论文列表、Infra 动态、项目 commit）
-2. 写一份**中文**日报，控制在 500 字以内，结构固定：
+1. 运行 `node $CLI collect`（天气/余额/论文/Infra/项目 commit）与 `node $CLI news`（AI 新闻），拿到两份素材 Markdown
+2. 合成一份**中文**简报，控制在 800 字以内，**章节顺序固定**：
    - ☀️ 天气：未来 24h 温度区间、降水概率峰值与时段、是否带伞、穿衣提示
+   - 📰 AI 新闻：挑 5–6 条最有价值的（优先大模型/产品发布、开源与推理 Infra、行业与研究动向），每条一句话点评 + 链接
    - 💰 DeepSeek 余额：当前余额 + 是否偏低（<¥20 提醒充值）
    - 📄 论文：按「Token 压缩 / 量化 / Infra」各挑 1–2 篇最有价值的，**每条都要带链接**
      （直接用素材里 `链接：` 那一行的 arXiv/HF 地址），并给一句话点评（为什么值得看）
@@ -97,9 +98,9 @@ prompt 模板（保持简短，细节交给 skill 与脚本）：
 - 想调整主题、地点、项目清单：改 `~/.acp-claw/daily-report/config.json`，不用改代码
 - 想让上下文累积（例如需要跨天对比）：去掉 cron 任务的 `--fresh-session`
 
-## AI 新闻推送（个人单聊）
+## AI 新闻（已并入每日简报）
 
-与日报同一套工具，只是换数据源与投递方式：**采集脚本取新闻事实，模型挑重点写成简报**。
+AI 新闻与日报共用一套工具，**同一份简报里排在天气之后**，跟着 cron 任务「每日简报」的 07:00 / 12:00 / 18:00 三个时段一起出。
 
 ```bash
 CLI=/home_ext/quyanyi/.acp-claw/tools/daily-report/cli.mjs
@@ -112,5 +113,5 @@ node $CLI publish --file /tmp/ai-news-<日期>.md \
 
 - 新闻源在 `config.json` 的 `news` 块：`feeds[]`（任意 RSS/Atom，可给 `keywords` 过滤、`windowHours` 单独放宽）+ `hackerNews`（走 HN Algolia，按标题命中 + `minPoints` 过滤）
 - 默认源：量子位、雷峰网、Google AI Blog、OpenAI News、HuggingFace Blog（`hf-mirror.com`）、Hacker News
-- 推单聊用**应用身份**（`--open-id`），所以显示为机器人发的消息；正文同时按 `--title` 归档到飞书文档
-- 定时任务「AI新闻」：`0 8 * * *`，`--fresh-session`（跑完即关，上下文不累积）；想改时间/频率改 cron，想改源改 `config.json`
+- 想单独把新闻推给自己：`publish --file <新闻.md> --title "AI新闻 {yyyy}-{MM}" --open-id <你的 open_id>`——用**应用身份**发单聊，并归档到独立的《AI新闻 YYYY-MM》文档（2026-09-16 曾用独立的 `AI新闻` cron 任务，现已并入日报）
+- 想改时间/频率改 cron 任务的 `--schedule`，想改源改 `config.json` 的 `news`
