@@ -198,6 +198,22 @@ export class MessageDispatcher {
           content: 'completed',
         });
       }
+
+      // 一次性会话（cron --fresh-session）：本轮结束后销毁会话，
+      // 避免上下文累积，也避免每天多留一个常驻 agent 进程
+      if ((msg.raw as { freshSession?: boolean } | undefined)?.freshSession) {
+        try {
+          await this.sessionManager.close(sessionKey);
+          this.logger.info(
+            'session',
+            `[${sessionKey}] fresh session closed after scheduled run`,
+          );
+        } catch (err) {
+          this.logger.warn('session', `close ${sessionKey} failed`, {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       console.error(`❌ Error handling message:`, errMsg);

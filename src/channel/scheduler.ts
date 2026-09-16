@@ -21,6 +21,11 @@ export interface ScheduledTask {
   chatId?: string;
   /** 可选：把任务注入到指定会话（而不是新建 scheduler 会话） */
   sessionKey?: string;
+  /**
+   * 可选：每次触发都新建会话（不复用上次上下文），本轮结束后关闭该会话。
+   * 适合「每天生成一份日报」这类一次性任务：上下文不累积、进程不常驻。
+   */
+  freshSession?: boolean;
   channelName?: string;
   senderId?: string;
   oneShot: boolean;
@@ -108,6 +113,7 @@ export class SchedulerChannel implements Channel {
     prompt: string;
     chatId?: string;
     sessionKey?: string;
+    freshSession?: boolean;
     channelName?: string;
     senderId?: string;
     oneShot?: boolean;
@@ -135,6 +141,7 @@ export class SchedulerChannel implements Channel {
       prompt: params.prompt,
       chatId: params.chatId,
       sessionKey: params.sessionKey,
+      freshSession: params.freshSession ?? false,
       channelName: params.channelName,
       senderId: params.senderId,
       oneShot: params.oneShot ?? false,
@@ -244,6 +251,7 @@ export class SchedulerChannel implements Channel {
         isScheduledTask: true,
         sourceChannel: task.channelName ?? (task.chatId ? 'feishu' : undefined),
         sessionKey: task.sessionKey,
+        freshSession: task.freshSession ?? false,
         senderId: task.senderId,
         oneShot: task.oneShot,
       },

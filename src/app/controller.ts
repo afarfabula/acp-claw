@@ -220,7 +220,7 @@ export class Controller {
     // Start Scheduler channel
     this.schedulerChannel.onMessage((msg: IncomingMessage) => {
       const raw = msg.raw as
-        | { sessionKey?: string; sourceChannel?: string }
+        | { sessionKey?: string; sourceChannel?: string; freshSession?: boolean }
         | undefined;
 
       let sessionKey: string;
@@ -231,6 +231,16 @@ export class Controller {
         userPrefix = parsed
           ? `${parsed.channel}_${parsed.userId}_`
           : getUserPrefix('scheduler', msg.sender.id);
+      } else if (raw?.freshSession) {
+        // 每次触发都开一个新会话：分配下一个 session id 并设为活跃会话，
+        // 该会话在本轮结束后由 dispatcher 关闭（见 message-dispatcher.ts）
+        userPrefix = getUserPrefix('scheduler', msg.sender.id);
+        sessionKey = `${userPrefix}${this.sessionManager.getNextSessionId(userPrefix)}`;
+        this.sessionManager.setActiveSession(userPrefix, sessionKey);
+        this.logger.info(
+          'scheduler',
+          `fresh session for task "${msg.sender.id}": ${sessionKey}`,
+        );
       } else {
         userPrefix = getUserPrefix('scheduler', msg.sender.id);
         sessionKey = this.sessionManager.getActiveSessionKey(userPrefix);

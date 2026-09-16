@@ -21,14 +21,16 @@ trigger: 当用户需要设置定时提醒、定期执行任务、周期性操�
 ### 添加定时任务
 
 ```bash
-acp-claw cron add --name <task-name> --schedule "<cron-expression>" --prompt "<prompt-text>" [--chat-id <chat-id>] [--one-shot]
+acp-claw cron add --name <task-name> --schedule "<cron-expression>" --prompt "<prompt-text>" [--chat-id <chat-id>] [--session <session-key>] [--fresh-session] [--one-shot]
 ```
 
 参数说明：
 - `--name`: 任务名称（唯一标识符）
 - `--schedule`: Cron 表达式（5 字段格式）
 - `--prompt`: 触发时发送给 AI 的提示词
-- `--chat-id`: （可选）指定回复消息的聊天 ID
+- `--chat-id`: （可选）指定回复消息的聊天 ID（把最终回复发到该会话/群）
+- `--session <session-key>`: （可选）复用指定会话的上下文，而不是新建 scheduler 会话
+- `--fresh-session`: （可选）每次触发都新建会话，**本轮结束后关闭该会话**——上下文不累积、每天不多留常驻 agent 进程；适合「每天生成一份日报/巡检」这类一次性任务
 - `--one-shot`: （可选）执行一次后自动删除
 
 ### 删除定时任务
@@ -67,6 +69,18 @@ acp-claw cron toggle --name <task-name> --enabled false
 ## Behavior
 
 - 任务创建后立刻生效，无需重启服务
-- 触发时会创建独立的 cron session 执行 prompt
+- 触发时默认复用 `scheduler_<任务名>_<n>` 会话执行 prompt（上下文逐次累积）
+- 加 `--fresh-session` 时，每次触发分配一个新的 scheduler 会话，本轮结束后销毁
 - oneShot 任务执行一次后自动删除
 - 任务数据持久化在 `scheduler/tasks.json`
+
+## 示例：每天 08:30 生成日报并发到群
+
+```bash
+acp-claw cron add \
+  --name 每日简报 \
+  --schedule "30 8 * * *" \
+  --chat-id oc_xxxxxxxxxxxxxxxx \
+  --fresh-session \
+  --prompt "生成今天的每日简报：按 skills/daily-report/SKILL.md 的「日报流程」执行"
+```

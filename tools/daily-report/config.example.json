@@ -1,0 +1,74 @@
+{
+  "timezone": "Asia/Shanghai",
+  "dataDir": "~/.acp-claw/daily-report/data",
+  "weather": {
+    "enabled": true,
+    "name": "成都 · 电子科技大学清水河校区",
+    "latitude": 30.7486,
+    "longitude": 103.9335,
+    "hours": 24
+  },
+  "balance": {
+    "enabled": true,
+    "label": "DeepSeek（共享 key）"
+  },
+  "papers": {
+    "hours": 24,
+    "maxPerTopic": 6,
+    "arxiv": [
+      {
+        "label": "视觉/视频 Token 压缩",
+        "query": "(cat:cs.CV OR cat:cs.CL) AND (all:\"visual token\" OR all:\"token pruning\" OR all:\"token compression\" OR all:\"token reduction\")"
+      },
+      {
+        "label": "量化压缩 (QAT/PTQ/低比特)",
+        "query": "(cat:cs.CL OR cat:cs.LG OR cat:cs.CV) AND (all:\"quantization\" OR all:\"W4A4\" OR all:\"low-bit\")"
+      },
+      {
+        "label": "推理框架 / Infra",
+        "query": "(cat:cs.DC OR cat:cs.LG OR cat:cs.CL) AND (all:\"LLM serving\" OR all:\"KV cache\" OR all:\"inference engine\" OR all:\"decode throughput\")"
+      }
+    ],
+    "hfDailyPapers": {
+      "enabled": true,
+      "base": "https://hf-mirror.com",
+      "top": 8
+    }
+  },
+  "infra": {
+    "hours": 48,
+    "releases": [
+      "vllm-project/vllm",
+      "sgl-project/sglang",
+      "NVIDIA/TensorRT-LLM",
+      "huggingface/transformers",
+      "deepseek-ai/DeepSeek-V3"
+    ],
+    "trending": {
+      "enabled": true,
+      "days": 7,
+      "minStars": 150,
+      "top": 5
+    }
+  },
+  "projects": {
+    "hours": 48,
+    "github": {
+      "user": "afarfabula",
+      "enabled": true
+    },
+    "local": [
+      { "name": "acp-claw", "path": "/home_ext/quyanyi/acp-claw" },
+      { "name": "ToRe4VLM_Inf", "path": "/home_ext/quyanyi/ToRe4VLM_Inf" },
+      {
+        "name": "addrmsnormbias_problem_1742_template",
+        "path": "/home_ext/quyanyi/addrmsnormbias_problem_1742_template"
+      },
+      { "name": "resume", "path": "/home_ext/quyanyi/tiger/resume" }
+    ]
+  },
+  "feishu": {
+    "docTitlePattern": "每日简报 {yyyy}-{MM}",
+    "chatId": "oc_f240829ae038b9d3e423560ad62ec053"
+  }
+}

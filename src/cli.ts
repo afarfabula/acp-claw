@@ -221,6 +221,11 @@ cronCmd
     '--session <sessionKey>',
     '目标会话 Key（复用该会话上下文而非新建会话）',
   )
+  .option(
+    '--fresh-session',
+    '每次触发新建会话（不复用上次上下文），本轮结束后关闭该会话',
+    false,
+  )
   .option('--one-shot', '执行一次后自动删除', false)
   .action(async (opts) => {
     const workDir = resolveWorkDir(program.opts().workDir);
@@ -232,6 +237,7 @@ cronCmd
       prompt: opts.prompt,
       chatId: opts.chatId,
       sessionKey: opts.session,
+      freshSession: opts.freshSession,
       oneShot: opts.oneShot,
     });
     if (result.success) {
