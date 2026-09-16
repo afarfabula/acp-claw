@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'fs';
 import cron, { type ScheduledTask as CronJob } from 'node-cron';
-import { join } from 'path';
+import { basename, join } from 'path';
 import type { Channel, IncomingMessage } from '../types/channel.js';
 import type { MessageBus } from '../types/messages.js';
 
@@ -319,18 +319,21 @@ export class SchedulerChannel implements Channel {
       this.saveConfig();
     }
 
-    this.watcher = watch(this.configPath, (eventType) => {
-      if (eventType === 'change') {
-        if (this.isSaving) return;
+    // 监视「目录」而不是文件本身：saveConfig 用「写 .tmp + rename」原子替换，
+    // 监视文件会在第一次替换后失效（inode 变了，之后收不到事件）。
+    const dir = join(this.workDir, 'scheduler');
+    const fileName = basename(this.configPath);
+    this.watcher = watch(dir, (_eventType, filename) => {
+      if (filename && filename !== fileName) return;
+      if (this.isSaving) return;
 
-        if (this.debounceTimer) {
-          clearTimeout(this.debounceTimer);
-        }
-        this.debounceTimer = setTimeout(() => {
-          this.debounceTimer = null;
-          this.reconcile();
-        }, SchedulerChannel.DEBOUNCE_MS);
+      if (this.debounceTimer) {
+        clearTimeout(this.debounceTimer);
       }
+      this.debounceTimer = setTimeout(() => {
+        this.debounceTimer = null;
+        this.reconcile();
+      }, SchedulerChannel.DEBOUNCE_MS);
     });
   }
 
