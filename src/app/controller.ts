@@ -31,6 +31,14 @@ export class Controller {
   private workDir: string;
   /** chatId → sessionKey，用于按聊天 ID 定位会话 */
   private chatSessionMap = new Map<string, string>();
+  /**
+   * chatId → 被定时任务绑定的会话（带过期时间）。
+   * 绑定期间，该群的用户消息会继续发到同一个会话，方便追问日报内容。
+   */
+  private chatBindings = new Map<
+    string,
+    { sessionKey: string; expiresAt: number }
+  >();
   private stopped = false;
   private saveInterval?: ReturnType<typeof setInterval>;
   private startedAt = Date.now();
@@ -69,6 +77,16 @@ export class Controller {
         this.chatSessionMap.set(chatId, sessionKey);
       }
     }
+    if (savedState?.chatBindings) {
+      const now = Date.now();
+      for (const [chatId, binding] of Object.entries(
+        savedState.chatBindings,
+      )) {
+        if (binding?.sessionKey && binding.expiresAt > now) {
+          this.chatBindings.set(chatId, binding);
+        }
+      }
+    }
 
     this.schedulerChannel = new SchedulerChannel(workDir, {
       info: (msg) => this.logger.info('scheduler', msg),
@@ -84,6 +102,8 @@ export class Controller {
     console.log(`   Default agent: ${this.config.defaultAgent}`);
 
     await this.sessionManager.restore();
+    // 启动会话空闲回收：超过 sessionIdleTimeoutMs 无活动的会话会被关闭并删除记录
+    this.sessionManager.startIdleSweeper();
 
     // Start Feishu channel if configured
     if (this.config.feishu) {
@@ -96,8 +116,27 @@ export class Controller {
             ? `${msg.chatId}_${msg.sender.id}`
             : msg.sender.id;
         const userPrefix = getUserPrefix('feishu', sessionUserId);
-        const sessionKey = this.sessionManager.getActiveSessionKey(userPrefix);
+        let sessionKey = this.sessionManager.getActiveSessionKey(userPrefix);
+
+        // 定时任务绑定过的群：后续消息继续发到被绑定的会话（便于追问）
+        // 用户主动使用斜杠命令（如 /session new）时解除绑定，尊重用户意图
         if (msg.chatId) {
+          const binding = this.chatBindings.get(msg.chatId);
+          if (binding && binding.expiresAt > Date.now()) {
+            if (msg.content.trim().startsWith('/')) {
+              this.chatBindings.delete(msg.chatId);
+              this.logger.info(
+                'session',
+                `chat ${msg.chatId} binding released by slash command`,
+              );
+            } else {
+              sessionKey = binding.sessionKey;
+              this.logger.info(
+                'session',
+                `chat ${msg.chatId} routed to bound session ${sessionKey}`,
+              );
+            }
+          }
           this.chatSessionMap.set(msg.chatId, sessionKey);
         }
         this.eventBus.emit('message-arrived', {
@@ -220,7 +259,15 @@ export class Controller {
     // Start Scheduler channel
     this.schedulerChannel.onMessage((msg: IncomingMessage) => {
       const raw = msg.raw as
-        | { sessionKey?: string; sourceChannel?: string; freshSession?: boolean }
+        | {
+            sessionKey?: string;
+            sourceChannel?: string;
+            freshSession?: boolean;
+            dailySession?: boolean;
+            keepSessionMs?: number;
+            bindChat?: boolean;
+            agent?: string;
+          }
         | undefined;
 
       let sessionKey: string;
@@ -231,6 +278,15 @@ export class Controller {
         userPrefix = parsed
           ? `${parsed.channel}_${parsed.userId}_`
           : getUserPrefix('scheduler', msg.sender.id);
+      } else if (raw?.dailySession) {
+        // 每天一个会话：当天多次触发共享上下文，跨天自动新建
+        userPrefix = getUserPrefix('scheduler', msg.sender.id);
+        const daily = this.sessionManager.getDailySession(userPrefix);
+        sessionKey = daily.sessionKey;
+        this.logger.info(
+          'scheduler',
+          `daily session for task "${msg.sender.id}": ${sessionKey}${daily.isNew ? ' (new)' : ' (reuse)'}`,
+        );
       } else if (raw?.freshSession) {
         // 每次触发都开一个新会话：分配下一个 session id 并设为活跃会话，
         // 该会话在本轮结束后由 dispatcher 关闭（见 message-dispatcher.ts）
@@ -244,6 +300,22 @@ export class Controller {
       } else {
         userPrefix = getUserPrefix('scheduler', msg.sender.id);
         sessionKey = this.sessionManager.getActiveSessionKey(userPrefix);
+      }
+
+      // 把目标群绑定到该会话，让群里的后续消息继续这个上下文
+      if (raw?.bindChat && msg.chatId) {
+        const ttl = raw.keepSessionMs && raw.keepSessionMs > 0
+          ? raw.keepSessionMs
+          : 24 * 60 * 60 * 1000;
+        this.chatBindings.set(msg.chatId, {
+          sessionKey,
+          expiresAt: Date.now() + ttl,
+        });
+        this.chatSessionMap.set(msg.chatId, sessionKey);
+        this.logger.info(
+          'session',
+          `chat ${msg.chatId} bound to ${sessionKey} for ${Math.round(ttl / 60000)}min`,
+        );
       }
 
       this.eventBus.emit('message-arrived', {
@@ -279,6 +351,7 @@ export class Controller {
     if (this.saveInterval) clearInterval(this.saveInterval);
     this.saveState();
     this.dispatcher.destroy();
+    this.sessionManager.stopIdleSweeper();
     await this.schedulerChannel.stop();
     await this.feishuChannel?.stop();
     await this.a2aChannel?.stop();
@@ -295,6 +368,7 @@ export class Controller {
       lastActivityAt: Date.now(),
       activeSessions: this.sessionManager.listActive().map((s) => s.sessionKey),
       chatSessionMap: Object.fromEntries(this.chatSessionMap),
+      chatBindings: Object.fromEntries(this.chatBindings),
     });
   }
 

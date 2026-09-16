@@ -20,6 +20,8 @@ export class MessageDispatcher {
   private workDir: string;
   private logger: Logger;
   private unsubscribes: Array<() => void> = [];
+  /** sessionKey → 定时关闭的计时器（定时任务保留窗口） */
+  private closeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(params: {
     eventBus: EventBus;
@@ -52,6 +54,41 @@ export class MessageDispatcher {
       unsub();
     }
     this.unsubscribes = [];
+    for (const timer of this.closeTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.closeTimers.clear();
+  }
+
+  /**
+   * 安排会话在 ttlMs 后关闭（重复调用会顺延）。
+   * 用于「定时任务触发后仍保留一段时间」的场景。
+   */
+  private scheduleSessionClose(sessionKey: string, ttlMs: number): void {
+    const existing = this.closeTimers.get(sessionKey);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.closeTimers.delete(sessionKey);
+      void this.sessionManager
+        .close(sessionKey)
+        .then(() =>
+          this.logger.info(
+            'session',
+            `[${sessionKey}] retention window ended, session closed`,
+          ),
+        )
+        .catch((err) =>
+          this.logger.warn('session', `close ${sessionKey} failed`, {
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+    }, ttlMs);
+    timer.unref?.();
+    this.closeTimers.set(sessionKey, timer);
+    this.logger.info(
+      'session',
+      `[${sessionKey}] kept alive for ${Math.round(ttlMs / 60000)}min after scheduled run`,
+    );
   }
 
   private async handleMessage(
@@ -61,6 +98,13 @@ export class MessageDispatcher {
 
     // Determine output channel: scheduler messages may specify a sourceChannel
     const outputChannel = (msg.raw as any)?.sourceChannel || payload.channel;
+    const msgRaw = msg.raw as
+      | {
+          freshSession?: boolean;
+          keepSessionMs?: number;
+          agent?: string;
+        }
+      | undefined;
 
     // Check for slash command
     const command = parseSlashCommand(msg.content);
@@ -113,7 +157,10 @@ export class MessageDispatcher {
       }
 
       // Ensure session exists, check if it's newly created
-      const session = await this.sessionManager.getOrCreate(sessionKey);
+      const session = await this.sessionManager.getOrCreate(
+        sessionKey,
+        msgRaw?.agent,
+      );
       const isNewSession = session.isNew;
 
       let parts: ReturnType<typeof buildPrompt>;
@@ -199,9 +246,10 @@ export class MessageDispatcher {
         });
       }
 
-      // 一次性会话（cron --fresh-session）：本轮结束后销毁会话，
-      // 避免上下文累积，也避免每天多留一个常驻 agent 进程
-      if ((msg.raw as { freshSession?: boolean } | undefined)?.freshSession) {
+      // 定时任务的会话生命周期：
+      // - freshSession：本轮结束后销毁（上下文不累积、进程不常驻）
+      // - keepSessionMs：本轮结束后保留一段时间再关闭（期间用户可以在群里追问）
+      if (msgRaw?.freshSession) {
         try {
           await this.sessionManager.close(sessionKey);
           this.logger.info(
@@ -213,6 +261,8 @@ export class MessageDispatcher {
             error: err instanceof Error ? err.message : String(err),
           });
         }
+      } else if (msgRaw?.keepSessionMs && msgRaw.keepSessionMs > 0) {
+        this.scheduleSessionClose(sessionKey, msgRaw.keepSessionMs);
       }
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);

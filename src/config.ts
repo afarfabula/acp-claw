@@ -4,6 +4,11 @@ import { join } from 'node:path';
 export interface AgentConfig {
   command: string;
   args?: string[];
+  /**
+   * 额外环境变量，启动该 agent 进程时注入（会覆盖继承的环境变量）。
+   * 典型用法：给定时任务用的 agent 单独指定 DEEPSEEK_API_KEY，实现独立计费。
+   */
+  env?: Record<string, string>;
 }
 
 export interface FeishuChannelConfig {

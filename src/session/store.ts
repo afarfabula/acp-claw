@@ -24,6 +24,8 @@ export interface ControllerState {
   activeSessionMap?: Record<string, string>;
   /** chatId → sessionKey 映射，用于按聊天 ID 定位会话 */
   chatSessionMap?: Record<string, string>;
+  /** chatId → 被定时任务绑定的会话（带过期时间） */
+  chatBindings?: Record<string, { sessionKey: string; expiresAt: number }>;
 }
 
 export class SessionStore {

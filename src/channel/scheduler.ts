@@ -26,6 +26,17 @@ export interface ScheduledTask {
    * 适合「每天生成一份日报」这类一次性任务：上下文不累积、进程不常驻。
    */
   freshSession?: boolean;
+  /**
+   * 可选：每天一个会话——当天多次触发复用同一个会话，跨天自动新建。
+   * 触发后会话保留（不立即关闭），便于用户在群里继续追问。
+   */
+  dailySession?: boolean;
+  /** 可选：触发结束后保留会话多久（毫秒），到期才关闭。0/未设置 = 不主动关闭 */
+  keepSessionMs?: number;
+  /** 可选：把任务目标群绑定到该会话，让群里的后续消息继续这个上下文 */
+  bindChat?: boolean;
+  /** 可选：使用哪个 agent（如 codex-daily，可配独立 API key 计费） */
+  agent?: string;
   channelName?: string;
   senderId?: string;
   oneShot: boolean;
@@ -114,6 +125,10 @@ export class SchedulerChannel implements Channel {
     chatId?: string;
     sessionKey?: string;
     freshSession?: boolean;
+    dailySession?: boolean;
+    keepSessionMs?: number;
+    bindChat?: boolean;
+    agent?: string;
     channelName?: string;
     senderId?: string;
     oneShot?: boolean;
@@ -142,6 +157,10 @@ export class SchedulerChannel implements Channel {
       chatId: params.chatId,
       sessionKey: params.sessionKey,
       freshSession: params.freshSession ?? false,
+      dailySession: params.dailySession ?? false,
+      keepSessionMs: params.keepSessionMs ?? 0,
+      bindChat: params.bindChat ?? false,
+      agent: params.agent,
       channelName: params.channelName,
       senderId: params.senderId,
       oneShot: params.oneShot ?? false,
@@ -252,6 +271,10 @@ export class SchedulerChannel implements Channel {
         sourceChannel: task.channelName ?? (task.chatId ? 'feishu' : undefined),
         sessionKey: task.sessionKey,
         freshSession: task.freshSession ?? false,
+        dailySession: task.dailySession ?? false,
+        keepSessionMs: task.keepSessionMs ?? 0,
+        bindChat: task.bindChat ?? false,
+        agent: task.agent,
         senderId: task.senderId,
         oneShot: task.oneShot,
       },

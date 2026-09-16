@@ -67,6 +67,7 @@ export class AcpClient extends EventEmitter {
   >();
   private command: string;
   private args: string[];
+  private env: Record<string, string> | undefined;
   private initResult: {
     agentCapabilities?: {
       loadSession?: boolean;
@@ -86,16 +87,21 @@ export class AcpClient extends EventEmitter {
     }
   >();
 
-  constructor(command: string, args: string[] = []) {
+  constructor(
+    command: string,
+    args: string[] = [],
+    env?: Record<string, string>,
+  ) {
     super();
     this.command = command;
     this.args = args;
+    this.env = env;
   }
 
   async start(): Promise<void> {
     this.process = spawn(this.command, this.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env: { ...process.env, ...(this.env ?? {}) },
     });
 
     this.process.on('error', (err) => {

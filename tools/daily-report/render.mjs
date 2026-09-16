@@ -4,6 +4,13 @@ import { localParts } from './state.mjs';
 
 const trim = (s, n) => (s && s.length > n ? `${s.slice(0, n)}…` : s ?? '');
 
+/** 把 arXiv 的 id 或 feed URL 统一成 https 链接 */
+function arxivUrl(idOrUrl) {
+  if (!idOrUrl) return '';
+  const m = String(idOrUrl).match(/(\d{4}\.\d{4,5})(v\d+)?/);
+  return m ? `https://arxiv.org/abs/${m[1]}` : String(idOrUrl);
+}
+
 function section(title) {
   return `\n## ${title}\n`;
 }
@@ -60,8 +67,10 @@ export function renderBrief(data, { timeZone = 'Asia/Shanghai' } = {}) {
     }
     for (const p of topic.items) {
       paperCount += 1;
-      out.push(`- **${trim(p.title, 160)}** ｜ ${trim(p.categories.join(','), 40)} ｜ ${p.published?.slice(0, 10)}`);
-      out.push(`  - ${p.id}`);
+      out.push(
+        `- **${trim(p.title, 160)}** ｜ ${trim(p.categories.join(','), 40)} ｜ ${p.published?.slice(0, 10)}`,
+      );
+      out.push(`  - 链接：${arxivUrl(p.url ?? p.id)}`);
       out.push(`  - 摘要：${trim(p.summary, 420)}`);
     }
   }
@@ -73,7 +82,10 @@ export function renderBrief(data, { timeZone = 'Asia/Shanghai' } = {}) {
     out.push('无数据');
   } else {
     for (const p of papers.hf) {
-      out.push(`- [${p.upvotes}👍] ${trim(p.title, 160)} ｜ ${p.id} ｜ ${p.publishedAt?.slice(0, 10)}`);
+      out.push(
+        `- [${p.upvotes}👍] **${trim(p.title, 160)}** ｜ ${p.publishedAt?.slice(0, 10)}`,
+      );
+      out.push(`  - 链接：${p.url ?? arxivUrl(p.id)}`);
       out.push(`  - 摘要：${trim(p.summary, 260)}`);
     }
   }

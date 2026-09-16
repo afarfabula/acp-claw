@@ -2,10 +2,15 @@ import { resolveAgent } from '../acp/agent-registry.js';
 import { AcpClient, type SessionUpdate } from '../acp/client.js';
 import type { ContentBlock } from '../acp/prompt-builder.js';
 import type { AcpClawConfig } from '../config.js';
-import { getSessionKey, getUserPrefix, parseSessionKey } from './router.js';
+import {
+  getSessionKey,
+  getUserPrefix,
+  localDayKey,
+  parseSessionKey,
+} from './router.js';
 import { type SessionRecord, SessionStore } from './store.js';
 
-export { getSessionKey, getUserPrefix, parseSessionKey };
+export { getSessionKey, getUserPrefix, localDayKey, parseSessionKey };
 
 export interface ActiveSession {
   sessionKey: string;
@@ -54,7 +59,11 @@ export class SessionManager {
       throw new Error(`Unknown agent: ${agent}`);
     }
 
-    const client = new AcpClient(agentConfig.command, agentConfig.args ?? []);
+    const client = new AcpClient(
+      agentConfig.command,
+      agentConfig.args ?? [],
+      agentConfig.env,
+    );
     await client.start();
 
     // 在 loadSession 之前注册 listener，确保协议规定的 replay events 被正确接收消费
@@ -263,6 +272,64 @@ export class SessionManager {
   async closeAll(): Promise<void> {
     const keys = [...this.sessions.keys()];
     await Promise.all(keys.map((key) => this.close(key)));
+  }
+
+  /**
+   * 取得「当天会话」：同一天内复用同一个会话（多次定时触发共享上下文），
+   * 跨天则分配新会话（上下文从头开始）。
+   */
+  getDailySession(
+    userPrefix: string,
+    dayKey: string = localDayKey(),
+  ): { sessionKey: string; isNew: boolean } {
+    const activeKey = this.activeSessionMap.get(userPrefix);
+    const active = activeKey ? this.sessions.get(activeKey) : undefined;
+    if (active && localDayKey(active.record.createdAt) === dayKey) {
+      return { sessionKey: active.sessionKey, isNew: false };
+    }
+    const sessionKey = `${userPrefix}${this.getNextSessionId(userPrefix)}`;
+    this.setActiveSession(userPrefix, sessionKey);
+    return { sessionKey, isNew: true };
+  }
+
+  private idleSweeper: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * 定期回收长时间无活动的会话（进程关掉、记录删除），
+   * 时长取 config.sessionIdleTimeoutMs（默认 30 分钟）。
+   */
+  startIdleSweeper(): void {
+    const timeout = this.config.sessionIdleTimeoutMs ?? 30 * 60_000;
+    if (this.idleSweeper) clearInterval(this.idleSweeper);
+    const interval = Math.max(60_000, Math.min(Math.floor(timeout / 4), 10 * 60_000));
+    this.idleSweeper = setInterval(() => {
+      void this.sweepIdle(timeout);
+    }, interval);
+    this.idleSweeper.unref?.();
+    console.log(
+      `[session] idle sweeper started: timeout=${Math.round(timeout / 60000)}min interval=${Math.round(interval / 60000)}min`,
+    );
+  }
+
+  stopIdleSweeper(): void {
+    if (this.idleSweeper) clearInterval(this.idleSweeper);
+    this.idleSweeper = null;
+  }
+
+  async sweepIdle(timeout: number): Promise<void> {
+    const now = Date.now();
+    for (const [key, session] of [...this.sessions.entries()]) {
+      if (session.busy) continue;
+      if (now - session.record.lastActivityAt < timeout) continue;
+      console.log(
+        `[session] idle > ${Math.round(timeout / 60000)}min, closing ${key}`,
+      );
+      try {
+        await this.close(key);
+      } catch {
+        // 回收失败不影响后续
+      }
+    }
   }
 
   /**

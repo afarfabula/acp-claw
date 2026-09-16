@@ -226,6 +226,21 @@ cronCmd
     '每次触发新建会话（不复用上次上下文），本轮结束后关闭该会话',
     false,
   )
+  .option(
+    '--daily-session',
+    '每天一个会话：当天多次触发复用同一会话，跨天自动新建',
+    false,
+  )
+  .option(
+    '--keep-session <ms>',
+    '触发结束后保留会话多久（毫秒）再关闭，便于在群里追问',
+  )
+  .option(
+    '--bind-chat',
+    '把目标群绑定到该会话：群里的后续消息继续这个上下文',
+    false,
+  )
+  .option('--agent <agent>', '使用指定 agent（如 codex-daily，可配独立 API key）')
   .option('--one-shot', '执行一次后自动删除', false)
   .action(async (opts) => {
     const workDir = resolveWorkDir(program.opts().workDir);
@@ -238,6 +253,10 @@ cronCmd
       chatId: opts.chatId,
       sessionKey: opts.session,
       freshSession: opts.freshSession,
+      dailySession: opts.dailySession,
+      keepSessionMs: opts.keepSession ? Number(opts.keepSession) : 0,
+      bindChat: opts.bindChat,
+      agent: opts.agent,
       oneShot: opts.oneShot,
     });
     if (result.success) {
