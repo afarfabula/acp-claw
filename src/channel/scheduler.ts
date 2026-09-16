@@ -335,6 +335,10 @@ export class SchedulerChannel implements Channel {
         this.reconcile();
       }, SchedulerChannel.DEBOUNCE_MS);
     });
+    // 目录被删/权限变化时 fs.watch 会抛 error 事件，未处理会直接崩掉进程
+    this.watcher.on('error', (err) => {
+      this.logger.error('Scheduler config watcher error', err);
+    });
   }
 
   private stopWatcher(): void {

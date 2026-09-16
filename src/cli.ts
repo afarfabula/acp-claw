@@ -248,6 +248,8 @@ cronCmd
           schedule: opts.schedule,
         }),
       );
+      // SchedulerChannel 会注册 node-cron 定时器，不显式退出进程会一直挂着
+      process.exit(0);
     } else {
       console.error(JSON.stringify({ success: false, error: result.error }));
       process.exit(1);
@@ -265,6 +267,7 @@ cronCmd
     const result = service.deleteTask(opts.name);
     if (result.success) {
       console.log(JSON.stringify({ success: true, deleted: opts.name }));
+      process.exit(0);
     } else {
       console.error(JSON.stringify({ success: false, error: result.error }));
       process.exit(1);
@@ -295,6 +298,7 @@ cronCmd
     const result = service.toggleTask(opts.name, enabled);
     if (result.success) {
       console.log(JSON.stringify({ success: true, name: opts.name, enabled }));
+      process.exit(0);
     } else {
       console.error(JSON.stringify({ success: false, error: result.error }));
       process.exit(1);
