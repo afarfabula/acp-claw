@@ -27,7 +27,12 @@ import {
   collectWeather,
 } from './collect.mjs';
 import { renderBrief } from './render.mjs';
-import { appendDoc, docTitleFromPattern, ensureDoc, sendChatMessage } from './feishu.mjs';
+import {
+  appendDoc,
+  docTitleFromPattern,
+  ensureDoc,
+  sendMessage,
+} from './feishu.mjs';
 
 function parseArgs(argv) {
   const positional = [];
@@ -114,7 +119,11 @@ async function cmdPublish(flags) {
 
   const chatId = typeof flags.chat === 'string' ? flags.chat : undefined;
   if (chatId) {
-    result.chatMessageId = await sendChatMessage(chatId, markdown);
+    result.chatMessageId = await sendMessage(chatId, markdown, 'chat_id');
+  }
+  const openId = typeof flags['open-id'] === 'string' ? flags['open-id'] : undefined;
+  if (openId) {
+    result.openMessageId = await sendMessage(openId, markdown, 'open_id');
   }
 
   state.lastRun = { date: parts.date, stamp: parts.stamp, docUrl: result.docUrl };

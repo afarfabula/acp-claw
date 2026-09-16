@@ -45,8 +45,11 @@ export function appendDoc(docRef, markdown) {
   return out;
 }
 
-/** 应用身份发消息到群/单聊（备用通道；正常路径是定时任务直接把最终回复发到群里） */
-export async function sendChatMessage(chatId, markdown) {
+/**
+ * 应用身份发消息（备用通道；正常路径是定时任务直接把最终回复发到群里）
+ * receiveIdType: 'chat_id'（群）或 'open_id'/'user_id'（单聊）
+ */
+export async function sendMessage(receiveId, markdown, receiveIdType = 'chat_id') {
   const token = await tenantToken();
   const card = {
     schema: '2.0',
@@ -57,20 +60,27 @@ export async function sendChatMessage(chatId, markdown) {
       elements: [{ tag: 'markdown', content: markdown }],
     },
   };
-  const res = await fetch(`${FEISHU_API}/im/v1/messages?receive_id_type=chat_id`, {
+  const res = await fetch(
+    `${FEISHU_API}/im/v1/messages?receive_id_type=${receiveIdType}`,
+    {
     method: 'POST',
     headers: {
       authorization: `Bearer ${token}`,
       'content-type': 'application/json; charset=utf-8',
     },
     body: JSON.stringify({
-      receive_id: chatId,
+      receive_id: receiveId,
       msg_type: 'interactive',
       content: JSON.stringify(card),
     }),
     signal: AbortSignal.timeout(20000),
-  });
+    },
+  );
   const j = await res.json();
   if (j.code !== 0) throw new Error(`发消息失败: code=${j.code} ${j.msg}`);
   return j.data?.message_id;
+}
+
+export function sendChatMessage(chatId, markdown) {
+  return sendMessage(chatId, markdown, 'chat_id');
 }
