@@ -20,6 +20,7 @@ cron（每天 08:30，--fresh-session）→ 新会话里的 agent
 | 学术论文 | arXiv API + HF Daily Papers（含 `hf-mirror.com` 镜像） | 按主题查询最近 N 小时提交 + 当日热榜 |
 | Infra 动态 | GitHub API | 关注仓库的新 release、近期高星新项目、账号下的 push 事件 |
 | 项目进展 | 本地 `git log/status` + GitHub 事件 | “用最新 commit 当记忆”，含未提交改动数量 |
+| AI 新闻 | RSS/Atom 多源 + HN Algolia API | 量子位/雷峰网/Google AI/OpenAI/HuggingFace Blog + Hacker News（按热度过滤），去重 + 时间窗 |
 
 ## 用法
 
@@ -28,8 +29,11 @@ CLI=/home_ext/quyanyi/.acp-claw/tools/daily-report/cli.mjs
 
 node $CLI collect                     # 采集素材：打印 Markdown，落盘 data/<日期>.json 与 <日期>-brief.md
 node $CLI collect --json              # 只打印落盘路径
+node $CLI news                        # 采集 AI 新闻素材：落盘 data/<日期>-news.json 与 <日期>-news.md
+node $CLI news --json                 # 只打印路径、条数与各源成功/失败状态
 node $CLI publish --file <日报.md>     # 写入飞书文档（按 config.feishu.docTitlePattern 自动建/找当月文档）
 node $CLI publish --file <日报.md> --chat oc_xxx   # 同时用应用身份发一份到群
+node $CLI publish --file <新闻.md> --title "AI新闻 {yyyy}-{MM}" --open-id ou_xxx  # 归档 + 单聊推送
 node $CLI config                      # 查看运行时配置
 ```
 
@@ -41,6 +45,7 @@ node $CLI config                      # 查看运行时配置
 - `weather.latitude/longitude/name/hours`：地点与预报时长
 - `papers.arxiv[]`：主题 + arXiv 查询串；`papers.hfDailyPapers`：HF 热榜（`base` 可指向镜像）
 - `infra.releases[]`：关注的 GitHub 仓库；`infra.trending`：近期高星新项目
+- `news.feeds[]`：新闻源（`label`/`url`/`limit`，可选 `keywords`、`windowHours`）；`news.hackerNews`：HN Algolia 关键词、`minPoints`、时间窗
 - `projects.local[]`：本地仓库（`name` + `path`）；`projects.github.user`：账号级 push 事件
 - `feishu.docTitlePattern`：日报文档标题模板，支持 `{yyyy}` `{MM}` `{date}` `{month}`
 - `feishu.chatId`：默认群（`publish --chat` 未指定时不会自动使用，交给 cron 任务的 `--chat-id`）
@@ -50,6 +55,7 @@ node $CLI config                      # 查看运行时配置
 - 写文档走 `tools/feishu-doc`（用户身份，令牌在 `~/.acp-claw/feishu-doc-data/user-token.json`），因此在飞书里看到的是「你写的」文档
 - 发群消息走应用身份（`im/v1/messages`），要求机器人已在该群里
 - 日报正文默认由 cron 任务的最终回复发到群里，`publish --chat` 只是备用通道
+- 个人推送用 `publish --open-id <open_id>`（应用身份单聊），适合「AI 新闻」这类只发给自己的简报
 
 ## 与 cron 配合
 

@@ -31,8 +31,11 @@ CLI=/home_ext/quyanyi/.acp-claw/tools/daily-report/cli.mjs
 
 node $CLI collect                    # 采集素材 → 打印 Markdown（同时落盘 data/<日期>.json / -brief.md）
 node $CLI collect --json             # 只输出落盘路径与失败项
+node $CLI news                       # 采集 AI 新闻素材（RSS 多源 + HN Algolia）→ data/<日期>-news.md
+node $CLI news --json                # 只输出落盘路径、条数与各源状态
 node $CLI publish --file <md>        # 写入当月飞书文档
 node $CLI publish --file <md> --chat <chatId>   # 同时发群（备用通道）
+node $CLI publish --file <md> --title "AI新闻 {yyyy}-{MM}" --open-id <openId>  # 归档到新闻文档 + 推送单聊
 node $CLI config                     # 查看运行时配置
 ```
 
@@ -93,3 +96,21 @@ prompt 模板（保持简短，细节交给 skill 与脚本）：
 - 文档写不进去（`permission denied`/令牌过期）：按 feishu-doc skill 重新授权
 - 想调整主题、地点、项目清单：改 `~/.acp-claw/daily-report/config.json`，不用改代码
 - 想让上下文累积（例如需要跨天对比）：去掉 cron 任务的 `--fresh-session`
+
+## AI 新闻推送（个人单聊）
+
+与日报同一套工具，只是换数据源与投递方式：**采集脚本取新闻事实，模型挑重点写成简报**。
+
+```bash
+CLI=/home_ext/quyanyi/.acp-claw/tools/daily-report/cli.mjs
+
+node $CLI news                                     # 素材（标题/链接/时间/摘要）
+node $CLI publish --file /tmp/ai-news-<日期>.md \
+  --title "AI新闻 {yyyy}-{MM}" \
+  --open-id ou_1e23742cb643e73a7e99196db2b80b8e    # 应用身份推送单聊（用户 open_id）
+```
+
+- 新闻源在 `config.json` 的 `news` 块：`feeds[]`（任意 RSS/Atom，可给 `keywords` 过滤、`windowHours` 单独放宽）+ `hackerNews`（走 HN Algolia，按标题命中 + `minPoints` 过滤）
+- 默认源：量子位、雷峰网、Google AI Blog、OpenAI News、HuggingFace Blog（`hf-mirror.com`）、Hacker News
+- 推单聊用**应用身份**（`--open-id`），所以显示为机器人发的消息；正文同时按 `--title` 归档到飞书文档
+- 定时任务「AI新闻」：`0 8 * * *`，`--fresh-session`（跑完即关，上下文不累积）；想改时间/频率改 cron，想改源改 `config.json`

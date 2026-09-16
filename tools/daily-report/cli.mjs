@@ -3,6 +3,7 @@
  * 日报工具（acp-claw）
  *
  *   node cli.mjs collect [--out <file>] [--json]     采集素材 → data/<date>.json + <date>-brief.md，默认打印素材 Markdown
+ *   node cli.mjs news [--json]                       采集 AI 新闻素材 → data/<date>-news.json + <date>-news.md
  *   node cli.mjs publish --file <md> [--doc auto|<url|id>] [--chat <chatId>]
  *                                                    把日报写入飞书文档（默认按月份自动建/找文档）；--chat 时同时发群
  *   node cli.mjs config                              打印当前运行时配置路径与内容
@@ -26,7 +27,8 @@ import {
   collectProjects,
   collectWeather,
 } from './collect.mjs';
-import { renderBrief } from './render.mjs';
+import { renderBrief, renderNews } from './render.mjs';
+import { collectNews } from './news.mjs';
 import {
   appendDoc,
   docTitleFromPattern,
@@ -139,7 +141,45 @@ function cmdConfig() {
   );
 }
 
-const COMMANDS = { collect: cmdCollect, publish: cmdPublish, config: cmdConfig };
+async function cmdNews(flags) {
+  const { config: cfg, missing } = loadConfig();
+  if (missing) console.error(`⚠️  未找到运行时配置，使用仓库示例配置`);
+  const failures = [];
+  const news = await collectNews(cfg, failures);
+  const brief = renderNews(news, { timeZone: cfg.timezone });
+  const dataDir = resolveDataDir(cfg);
+  const date = localParts(new Date(), cfg.timezone).date;
+  const jsonPath = join(dataDir, `${date}-news.json`);
+  const briefPath = join(dataDir, `${date}-news.md`);
+  writeFileSync(jsonPath, JSON.stringify(news, null, 2), 'utf-8');
+  writeFileSync(briefPath, brief, 'utf-8');
+  if (flags.json) {
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          jsonPath,
+          briefPath,
+          count: news.items.length,
+          sources: news.sources,
+          failures,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  } else {
+    process.stdout.write(`${brief}\n`);
+    process.stderr.write(`\n[news] 素材已写入 ${briefPath} / ${jsonPath}\n`);
+  }
+  if (failures.length) process.stderr.write(`[news] 失败项: ${failures.join(' | ')}\n`);
+}
+
+const COMMANDS = {
+  collect: cmdCollect,
+  news: cmdNews,
+  publish: cmdPublish,
+  config: cmdConfig,
+};
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);

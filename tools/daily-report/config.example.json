@@ -35,6 +35,44 @@
       "top": 8
     }
   },
+  "news": {
+    "windowHours": 30,
+    "maxItems": 40,
+    "feeds": [
+      { "label": "量子位", "url": "https://www.qbitai.com/feed", "limit": 8 },
+      {
+        "label": "雷峰网",
+        "url": "https://www.leiphone.com/feed",
+        "limit": 8,
+        "keywords": ["AI", "大模型", "人工智能", "模型", "算力", "芯片", "GPU", "机器人", "智能体"]
+      },
+      {
+        "label": "Google AI Blog",
+        "url": "https://blog.google/technology/ai/rss/",
+        "limit": 4,
+        "windowHours": 72
+      },
+      {
+        "label": "OpenAI News",
+        "url": "https://openai.com/news/rss.xml",
+        "limit": 4,
+        "windowHours": 96
+      },
+      {
+        "label": "HuggingFace Blog",
+        "url": "https://hf-mirror.com/blog/feed.xml",
+        "limit": 3,
+        "windowHours": 72
+      }
+    ],
+    "hackerNews": {
+      "enabled": true,
+      "minPoints": 60,
+      "hours": 36,
+      "limit": 6,
+      "queries": ["AI", "LLM", "OpenAI", "agent"]
+    }
+  },
   "infra": {
     "hours": 48,
     "releases": [

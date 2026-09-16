@@ -140,3 +140,38 @@ export function artifactNames(cfg) {
   const { date, stamp } = localParts(new Date(), cfg.timezone);
   return { date, stamp };
 }
+
+/** AI 新闻素材：按来源分组，供大模型挑重点写成简报 */
+export function renderNews(data, { timeZone = 'Asia/Shanghai' } = {}) {
+  const out = [];
+  out.push(`# AI 新闻素材 ${data.stamp}（${timeZone}）`);
+  out.push(
+    `窗口：最近 ${data.windowHours} 小时 ｜ 去重后 ${data.items.length} 条（上限 ${data.maxItems}）`,
+  );
+  if (data.failures?.length) out.push(`\n> 失败项：${data.failures.join(' | ')}`);
+
+  const bySource = new Map();
+  for (const it of data.items) {
+    if (!bySource.has(it.source)) bySource.set(it.source, []);
+    bySource.get(it.source).push(it);
+  }
+
+  for (const [source, items] of bySource) {
+    out.push(`\n## ${source}（${items.length} 条）`);
+    for (const it of items) {
+      const when = it.published ? it.published.slice(0, 16).replace('T', ' ') : '时间未知';
+      out.push(`\n- **${it.title}** ｜ ${when}`);
+      out.push(`  - 链接：${it.link}`);
+      if (it.discussion) out.push(`  - 讨论：${it.discussion}`);
+      if (it.summary) out.push(`  - 摘要：${trim(it.summary, 260)}`);
+    }
+  }
+
+  const failed = (data.sources ?? []).filter((s) => s.error);
+  if (failed.length) {
+    out.push(`\n## 采集失败的源\n`);
+    for (const s of failed) out.push(`- ${s.label}：${s.error}`);
+  }
+
+  return out.join('\n');
+}
