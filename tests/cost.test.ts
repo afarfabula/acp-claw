@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from '@rstest/core';
@@ -162,10 +168,42 @@ describe('session-cost', () => {
       (407_000 / 1_000_000) * 0.04 +
       (3_000 / 1_000_000) * 8;
     expect(cost?.amount).toBeCloseTo(expected, 6);
+    // 会话累计 = 上一个回合（¥2）+ 本回合
+    expect(cost?.sessionRequests).toBe(3);
+    expect(cost?.sessionAmount).toBeCloseTo(2 + expected, 6);
     const text = formatCostLine(cost as NonNullable<typeof cost>);
     expect(text).toContain('本回合');
     expect(text).toContain('2 次请求');
     expect(text).toContain('高峰');
+    expect(text).toContain('会话累计');
+    expect(text).toContain('3 次请求');
+  });
+
+  it('增量解析：文件追加后累计会往上涨，遇 task_started 只重置本回合', () => {
+    const t = (m: number) =>
+      `2026-09-16T02:${String(m).padStart(2, '0')}:00.000Z`;
+    writeFileSync(
+      file,
+      turnContext(t(0), 'deepseek-flash') +
+        taskStarted(t(1)) +
+        tokenCount(t(2), { input: 1_000_000, cached: 0, output: 0 }),
+    );
+    const first = computeRoundCost(file);
+    expect(first?.requests).toBe(1);
+    expect(first?.sessionAmount).toBeCloseTo(2, 6);
+
+    // 追加第二个回合的两次请求
+    appendFileSync(
+      file,
+      taskStarted(t(30)) +
+        tokenCount(t(31), { input: 100_000, cached: 100_000, output: 0 }) +
+        tokenCount(t(32), { input: 100_000, cached: 100_000, output: 0 }),
+    );
+    const second = computeRoundCost(file);
+    expect(second?.requests).toBe(2);
+    expect(second?.amount).toBeCloseTo(0.008, 6);
+    expect(second?.sessionRequests).toBe(3);
+    expect(second?.sessionAmount).toBeCloseTo(2.008, 6);
   });
 
   it('没有 task_started 的老会话退回最后一次请求', () => {
@@ -180,6 +218,9 @@ describe('session-cost', () => {
     const cost = computeRoundCost(file);
     expect(cost?.requests).toBe(1);
     expect(cost?.amount).toBeCloseTo(0.004, 6);
+    // 会话累计仍然是全部两次请求
+    expect(cost?.sessionRequests).toBe(2);
+    expect(cost?.sessionAmount).toBeCloseTo(2.004, 6);
   });
 
   it('空文件 / 无请求时返回 null', () => {
@@ -215,6 +256,12 @@ describe('session-cost', () => {
 
     expect(mine?.requests).toBe(refRound.turns.length);
     expect(mine?.amount).toBeCloseTo(refAmount, 9);
+    // 会话累计 = 该会话所有请求之和（参考实现：summarize(parsed.turns).cost）
+    expect(mine?.sessionRequests).toBe(parsed.turns.length);
+    expect(mine?.sessionAmount).toBeCloseTo(
+      parsed.turns.reduce((sum, turn) => sum + turn.cost, 0),
+      9,
+    );
   });
 
   it('真实会话记录也能算出来（没有则跳过）', () => {
@@ -235,6 +282,12 @@ describe('session-cost', () => {
     expect(cost?.requests).toBe(refRound.turns.length);
     expect(cost?.amount).toBeCloseTo(
       refRound.turns.reduce((sum, turn) => sum + turn.cost, 0),
+      9,
+    );
+    const refParsed = refParseRollout(real);
+    expect(cost?.sessionRequests).toBe(refParsed.turns.length);
+    expect(cost?.sessionAmount).toBeCloseTo(
+      refParsed.turns.reduce((sum, turn) => sum + turn.cost, 0),
       9,
     );
     if (process.env.ACP_CLAW_COST_DEBUG) {

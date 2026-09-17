@@ -136,6 +136,7 @@ describe('MessageDispatcher × replyCost', () => {
     expect(costLine).toBeDefined();
     expect(costLine).toContain('1 次请求');
     expect(costLine).toContain('高峰');
+    expect(costLine).toContain('会话累计');
   });
 
   it('关闭时不追加', async () => {
