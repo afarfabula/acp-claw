@@ -9,6 +9,7 @@
  *   node cli.mjs table <doc_id|url> [--index N]    导出文档里的表格（按行列还原）
  *   node cli.mjs create --title <标题> [--folder <folder_token>]
  *   node cli.mjs append <doc_id|url> --md <markdown|@文件路径> [--use-convert]
+ *                                                （支持 Markdown 管道表格 → 飞书原生表格）
  *   node cli.mjs update-block <doc_id> <block_id> --text <文本>
  *   node cli.mjs delete-block <doc_id> <block_id> --parent <parent_block_id> [--index N]
  *   node cli.mjs list [--folder <folder_token>]
@@ -162,6 +163,69 @@ function parseInline(text) {
   return elements;
 }
 
+/** 判断某行是否是 Markdown 表格分隔行（|---|、--- | :--: 等） */
+function isTableSeparator(line) {
+  const s = String(line).trim().replace(/^\|/, '').replace(/\|$/, '');
+  if (!s.includes('-')) return false;
+  const parts = s.split('|').map((p) => p.trim());
+  return parts.length > 0 && parts.every((p) => /^:?-{2,}:?$/.test(p));
+}
+
+/** 拆一行 Markdown 表格为单元格数组（支持 \| 转义） */
+function splitTableRow(line) {
+  const s = String(line).trim().replace(/^\|/, '').replace(/\|$/, '');
+  const cells = [];
+  let cur = '';
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i];
+    if (ch === '\\' && s[i + 1] === '|') { cur += '|'; i += 1; continue; }
+    if (ch === '|') { cells.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+
+/**
+ * 把二维单元格转成「创建嵌套块」接口的 descendants（表格 + 单元格 + 文本）。
+ * 飞书 docx 表格（block_type 31）必须连同单元格（32）和单元格内文本块一起创建，
+ * 普通「创建块」接口建不了，得走 /descendant。
+ */
+function buildTablePayload(rows, prefix = 'T') {
+  const cols = Math.max(...rows.map((r) => r.length));
+  const descendants = [];
+  const cellIds = [];
+  rows.forEach((row, r) => {
+    for (let c = 0; c < cols; c += 1) {
+      const cellId = `${prefix}_cell_${r}_${c}`;
+      const textId = `${prefix}_text_${r}_${c}`;
+      cellIds.push(cellId);
+      descendants.push({ block_id: cellId, block_type: 32, table_cell: {}, children: [textId] });
+      descendants.push({
+        block_id: textId,
+        block_type: 2,
+        text: { elements: parseInline(row[c] ?? ''), style: {} },
+      });
+    }
+  });
+  descendants.push({
+    block_id: `${prefix}_table`,
+    block_type: 31,
+    table: { property: { row_size: rows.length, column_size: cols, header_row: true } },
+    children: cellIds,
+  });
+  return { childrenId: [`${prefix}_table`], descendants };
+}
+
+/** 插入一个飞书原生表格块（首行作为表头） */
+async function insertTable(docId, parentId, index, rows, prefix) {
+  const { childrenId, descendants } = buildTablePayload(rows, prefix);
+  return api(`/docx/v1/documents/${docId}/blocks/${parentId}/descendant`, {
+    method: 'POST',
+    body: { children_id: childrenId, index, descendants },
+  });
+}
+
 /** 本地 Markdown → 飞书块（不依赖额外权限） */
 function markdownToBlocksLocal(md) {
   const blocks = [];
@@ -178,7 +242,9 @@ function markdownToBlocksLocal(md) {
     });
     codeBuf = [];
   };
-  for (const raw of md.replace(/\r\n/g, '\n').split('\n')) {
+  const lines = md.replace(/\r\n/g, '\n').split('\n');
+  for (let li = 0; li < lines.length; li += 1) {
+    const raw = lines[li];
     const line = raw.trimEnd();
     if (line.startsWith('```')) {
       if (inCode) flushCode();
@@ -187,6 +253,18 @@ function markdownToBlocksLocal(md) {
     }
     if (inCode) {
       codeBuf.push(raw);
+      continue;
+    }
+    // Markdown 管道表格（| a | b | + |---|---| 分隔行）→ 飞书原生表格
+    if (line.includes('|') && isTableSeparator(lines[li + 1] ?? '')) {
+      const rows = [splitTableRow(line)];
+      li += 2;
+      while (li < lines.length && lines[li].trim() && lines[li].includes('|')) {
+        rows.push(splitTableRow(lines[li]));
+        li += 1;
+      }
+      li -= 1;
+      blocks.push({ block_type: 31, __tableRows: rows });
       continue;
     }
     if (!line.trim()) continue;
@@ -330,20 +408,36 @@ const commands = {
   async append([input], flags) {
     const id = await docId(input);
     const md = readText(flags.md);
-    const blocks = await markdownToBlocks(md, Boolean(flags['use-convert']));
-    // 单次插入块数有上限（约 50），分批写入
+    const items = await markdownToBlocks(md, Boolean(flags['use-convert']));
+    // 单次插入块数有上限（约 50），普通块分批写入；表格带子块，须走「创建嵌套块」接口逐个插入
     let index = await rootChildCount(id);
     let last;
+    let count = 0;
+    let tableSeq = 0;
     const BATCH = 40;
-    for (let i = 0; i < blocks.length; i += BATCH) {
-      const chunk = blocks.slice(i, i + BATCH);
+    let i = 0;
+    while (i < items.length) {
+      if (items[i].__tableRows) {
+        last = await insertTable(id, id, index, items[i].__tableRows, `t${tableSeq}`);
+        index += 1;
+        count += 1;
+        tableSeq += 1;
+        i += 1;
+        continue;
+      }
+      const chunk = [];
+      while (i < items.length && !items[i].__tableRows && chunk.length < BATCH) {
+        chunk.push(items[i]);
+        i += 1;
+      }
       last = await api(`/docx/v1/documents/${id}/blocks/${id}/children`, {
         method: 'POST',
         body: { children: chunk, index },
       });
       index += chunk.length;
+      count += chunk.length;
     }
-    console.log(`已追加 ${blocks.length} 个块（分 ${Math.ceil(blocks.length / BATCH)} 批），文档版本 → ${last?.document_revision_id}`);
+    console.log(`已追加 ${count} 个块（含表格 ${tableSeq} 张），文档版本 → ${last?.document_revision_id}`);
   },
 
   async 'update-block'([input, blockId], flags) {

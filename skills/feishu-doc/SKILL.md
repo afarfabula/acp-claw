@@ -39,7 +39,7 @@ node $CLI read <doc_id|url>                 # 读纯文本
 node $CLI meta <doc_id|url>                 # 读标题/版本
 node $CLI blocks <doc_id|url>               # 列出块（含 block_id，便于定点修改）
 node $CLI create --title <标题> [--folder <folder_token>]
-node $CLI append <doc_id|url> --md <markdown>      # 追加 Markdown（也支持 --md @文件路径）
+node $CLI append <doc_id|url> --md <markdown>      # 追加 Markdown（也支持 --md @文件路径；管道表格会转成原生表格）
 node $CLI update-block <doc_id> <block_id> --text <文本>
 node $CLI delete-block <doc_id> <block_id> --parent <parent_block_id> [--index N]
 node $CLI list [--folder <folder_token>]   # 列出云空间文件
@@ -56,6 +56,9 @@ node $CLI delete <doc_id|url>              # 删除文档（移入回收站）
 - `blocks` 输出格式：`block_id  type=N(类型)  文本内容`，用于定位要修改的块
 - 文档链接形如 `https://feishu.cn/docx/<document_id>`，CLI 会自动从链接里提取 ID
 - 修改已有段落：先用 `blocks` 找到目标 `block_id`，再用 `update-block` 覆盖内容
+
+- **表格**：Markdown 管道表格（`| a | b |` + `|---|---|` 分隔行）会被转成**飞书原生表格**，首行自动作为表头
+- 写文档时，**关键实验结果、对比数据、消融表一律用表格**（Markdown 管道表格即可），不要用纯文本行或缩进列表堆数据
 
 ## 常见错误
 
