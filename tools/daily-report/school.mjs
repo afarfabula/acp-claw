@@ -308,7 +308,8 @@ export async function collectSchool(cfg, failures = [], opts = {}) {
     else if (!prev.date && it.date) byKey.set(key, it);
   }
 
-  const seenState = (readState().school ?? {}).seen ?? {};
+  // markSeen === false（--all）时忽略已读，全部当作新增，且不回写状态
+  const seenState = opts.markSeen === false ? {} : ((readState().school ?? {}).seen ?? {});
   const items = [...byKey.values()]
     .map((it) => ({ ...it, isNew: !seenState[normKey(it.url)] }))
     .sort((a, b) => String(b.date ?? '').localeCompare(String(a.date ?? '')));

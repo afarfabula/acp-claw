@@ -74,6 +74,8 @@ node $CLI config                      # 查看运行时配置
 4. **增量去重**：已报过的链接记在 `state.json` 的 `school.seen`（默认保留 90 天），素材只详列「新增」，其余只列一行备查
 5. 新增且属于重点标签的通知，会顺带抓一次正文，截前 450 字放进素材（`fetchDetails`）
 
+素材里每条都带 `链接：` 行（原文地址），写简报时必须把它带上——群里只有可点击链接才有用。
+
 常用配置（`~/.acp-claw/daily-report/config.json` 的 `school` 块）：
 
 - `windowDays`：时间窗（默认 7 天）

@@ -6,7 +6,7 @@
  *   node cli.mjs news [--json]                       采集 AI 新闻素材 → data/<date>-news.json + <date>-news.md
  *   node cli.mjs school [--json] [--days N] [--all]  采集学校/学院通知（信通学院+研究生院+学工部）
  *                                                    → data/<date>-school.json + <date>-school.md
- *                                                    （默认只标「新增」并记录已读；--all 忽略已读，--no-detail 不抓正文）
+ *                                                    （默认只标「新增」并记录已读；--all 忽略已读且不回写，--no-detail 不抓正文）
  *   node cli.mjs publish --file <md> [--doc auto|<url|id>] [--chat <chatId>]
  *                                                    把日报写入飞书文档（默认按月份自动建/找文档）；--chat 时同时发群
  *   node cli.mjs config                              打印当前运行时配置路径与内容
