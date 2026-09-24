@@ -40,7 +40,7 @@
     "windowDays": 7,
     "maxPerSource": 30,
     "seenKeepDays": 90,
-    "fetchDetails": { "enabled": true, "max": 6, "maxChars": 600 },
+    "fetchDetails": { "enabled": true, "max": 8, "maxChars": 450 },
     "detailTags": [
       "放假/节假日",
       "奖助学金/评优",

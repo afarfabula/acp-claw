@@ -325,7 +325,7 @@ export async function collectSchool(cfg, failures = [], opts = {}) {
               !it.spa &&
               it.tags.some((t) => detailTags.includes(t)),
           )
-          .slice(0, conf.fetchDetails?.max ?? 6)
+          .slice(0, conf.fetchDetails?.max ?? 8)
       : [];
   await Promise.all(
     wantDetail.map(async (it) => {
