@@ -33,6 +33,10 @@ node $CLI collect                    # 采集素材 → 打印 Markdown（同时
 node $CLI collect --json             # 只输出落盘路径与失败项
 node $CLI news                       # 采集 AI 新闻素材（RSS 多源 + HN Algolia）→ data/<日期>-news.md
 node $CLI news --json                # 只输出落盘路径、条数与各源状态
+node $CLI school                     # 采集学校/学院通知素材 → data/<日期>-school.md（放假/奖助/教学/学位，增量去重）
+node $CLI school --json              # 只输出路径、新增条数与各源状态
+node $CLI school --days 30           # 放宽时间窗（首次跑用，把存量一次性标为已读）
+node $CLI school --all               # 忽略已读状态全部当作新增（调试用）
 node $CLI publish --file <md>        # 写入当月飞书文档
 node $CLI publish --file <md> --chat <chatId>   # 同时发群（备用通道）
 node $CLI publish --file <md> --title "AI新闻 {yyyy}-{MM}" --open-id <openId>  # 归档到新闻文档 + 推送单聊
@@ -63,15 +67,18 @@ prompt 模板（保持简短，细节交给 skill 与脚本）：
 
 ```text
 生成今天的每日简报：按 skills/daily-report/SKILL.md 的「日报流程」执行
-（先跑 collect 采集素材，再写日报，写入飞书文档；最终回复里必须带上飞书文档链接
+（先跑 collect / news / school 三份素材，再写日报，写入飞书文档；最终回复里必须带上飞书文档链接
 和每篇推荐论文的链接）。
 ```
 
 ## 日报流程（模型侧步骤）
 
-1. 运行 `node $CLI collect`（天气/余额/论文/Infra/项目 commit）与 `node $CLI news`（AI 新闻），拿到两份素材 Markdown
+1. 运行 `node $CLI collect`（天气/余额/论文/Infra/项目 commit）、`node $CLI news`（AI 新闻）、`node $CLI school`（学校/学院通知），拿到三份素材 Markdown
 2. 合成一份**中文**简报，控制在 800 字以内，**章节顺序固定**：
    - ☀️ 天气：未来 24h 温度区间、降水概率峰值与时段、是否带伞、穿衣提示
+   - 🏫 学校通知：只说**新增**里与本人相关的（放假/调课安排、奖助学金申报与发放、学籍培养、学位答辩、竞赛就业）；
+     **放假类的具体日期/调课日期必须写清楚**（素材的「摘要」里有）；没有新增就写一行「无新增通知」。
+     通用安全须知、名单公示之类只做一句话概括，不要抄正文
    - 📰 AI 新闻：挑 5–6 条最有价值的（优先大模型/产品发布、开源与推理 Infra、行业与研究动向），每条一句话点评 + 链接
    - 💰 DeepSeek 余额：当前余额 + 是否偏低（<¥20 提醒充值）
    - 📄 论文：按「Token 压缩 / 量化 / Infra」各挑 1–2 篇最有价值的，**每条都要带链接**
@@ -115,3 +122,20 @@ node $CLI publish --file /tmp/ai-news-<日期>.md \
 - 默认源：量子位、雷峰网、Google AI Blog、OpenAI News、HuggingFace Blog（`hf-mirror.com`）、Hacker News
 - 想单独把新闻推给自己：`publish --file <新闻.md> --title "AI新闻 {yyyy}-{MM}" --open-id <你的 open_id>`——用**应用身份**发单聊，并归档到独立的《AI新闻 YYYY-MM》文档（2026-09-16 曾用独立的 `AI新闻` cron 任务，现已并入日报）
 - 想改时间/频率改 cron 任务的 `--schedule`，想改源改 `config.json` 的 `news`
+
+## 学校通知（已并入每日简报）
+
+面向「在读研究生关心的事」：放假通知、奖助学金、教学安排、培养学籍、学位答辩、竞赛就业。
+源：信通学院（研究生科/教务科/学生科）、研究生院（重要公告/教学管理/学生管理/奖助学金/评奖评优/学位管理/就业实践）、学生工作部（站内搜索）。
+
+```bash
+CLI=/home_ext/quyanyi/.acp-claw/tools/daily-report/cli.mjs
+node $CLI school          # 默认 7 天窗口；只详列「新增」，其余只列一行
+node $CLI school --json   # 给模型看：新增条数 / 各标签条数 / 每条标题链接
+```
+
+- **增量去重**：已报过的链接记在 `~/.acp-claw/daily-report/state.json` 的 `school.seen`（保留 90 天），
+  所以同一份简报不管一天跑几次，都只报新通知；连续时段（07/12/18）不会重复轰炸
+- 新增的重点通知（放假/奖助/教学/培养/学位）会自动带 450 字正文摘要，写简报时用它取具体日期与要求
+- 调停课、监考、借教室这类常规通知被识别为「噪音」，只统计条数不进正文
+- 改源/改标签改 `config.json` 的 `school` 块（`sources[]`、`tags[]`、`noise.keywords`、`fetchDetails`）

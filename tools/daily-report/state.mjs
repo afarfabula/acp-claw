@@ -28,6 +28,7 @@ const DEFAULTS = {
   balance: { enabled: true, label: 'DeepSeek' },
   papers: { hours: 24, maxPerTopic: 6, arxiv: [], hfDailyPapers: { enabled: true, base: 'https://hf-mirror.com', top: 8 } },
   news: { windowHours: 30, maxItems: 40, feeds: [], hackerNews: {} },
+  school: { enabled: true, windowDays: 7, maxPerSource: 30, seenKeepDays: 90, fetchDetails: {} },
   infra: { hours: 48, releases: [], trending: { enabled: false } },
   projects: { hours: 48, github: { enabled: false }, local: [] },
   feishu: {},

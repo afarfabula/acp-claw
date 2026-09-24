@@ -21,6 +21,7 @@ cron（每天 08:30，--fresh-session）→ 新会话里的 agent
 | Infra 动态 | GitHub API | 关注仓库的新 release、近期高星新项目、账号下的 push 事件 |
 | 项目进展 | 本地 `git log/status` + GitHub 事件 | “用最新 commit 当记忆”，含未提交改动数量 |
 | AI 新闻 | RSS/Atom 多源 + HN Algolia API | 量子位/雷峰网/Google AI/OpenAI/HuggingFace Blog + Hacker News（按热度过滤），去重 + 时间窗 |
+| 学校通知 | 研究生院 / 信通学院 / 学生工作部 | 放假通知、奖助学金、教学安排、培养学籍、学位答辩、就业竞赛；按标签分类 + 增量去重（默认只报新出现的） |
 
 ## 用法
 
@@ -31,6 +32,11 @@ node $CLI collect                     # 采集素材：打印 Markdown，落盘 
 node $CLI collect --json              # 只打印落盘路径
 node $CLI news                        # 采集 AI 新闻素材：落盘 data/<日期>-news.json 与 <日期>-news.md
 node $CLI news --json                 # 只打印路径、条数与各源成功/失败状态
+node $CLI school                      # 采集学校/学院通知素材（默认 7 天窗口，标记已读，只详列新增）
+node $CLI school --json               # 只打印路径、新增条数与各源状态
+node $CLI school --days 30            # 放宽时间窗（首次跑建议大一点，把历史一次记进已读）
+node $CLI school --all                # 忽略已读状态，全部当作新增（调试用，不更新已读）
+node $CLI school --no-detail          # 不抓正文摘要（更快，只用标题）
 node $CLI publish --file <日报.md>     # 写入飞书文档（按 config.feishu.docTitlePattern 自动建/找当月文档）
 node $CLI publish --file <日报.md> --chat oc_xxx   # 同时用应用身份发一份到群
 node $CLI publish --file <新闻.md> --title "AI新闻 {yyyy}-{MM}" --open-id ou_xxx  # 归档 + 单聊推送
@@ -49,6 +55,35 @@ node $CLI config                      # 查看运行时配置
 - `projects.local[]`：本地仓库（`name` + `path`）；`projects.github.user`：账号级 push 事件
 - `feishu.docTitlePattern`：日报文档标题模板，支持 `{yyyy}` `{MM}` `{date}` `{month}`
 - `feishu.chatId`：默认群（`publish --chat` 未指定时不会自动使用，交给 cron 任务的 `--chat-id`）
+
+## 学校通知（`school`）
+
+面向「在校生关心的事」做的采集，默认盯这几类源：
+
+| 站点 | 栏目 | 解析器 |
+| --- | --- | --- |
+| 信通学院（`www.sice.uestc.edu.cn`） | 研究生科 / 教务科 / 学生科 | `vsb`（学院 CMS：`li > a > div.p-date + p`） |
+| 研究生院（`gr.uestc.edu.cn`） | 重要公告 / 教学管理 / 学生管理 / 奖助学金 / 评奖评优 / 学位管理 / 就业实践 | `gr`（`div.title > a` + `div.time`） |
+| 学生工作部（`xgb.uestc.edu.cn`） | 站内搜索「奖学金 / 助学金 / 放假」 | `xgbSearch`（搜索页服务端渲染；明细页是 SPA，故不抓正文） |
+
+处理逻辑：
+
+1. 每个源独立抓取、独立失败（失败只体现在素材顶部的「失败项」里）
+2. 按 `tags[].keywords` 给标题打标签（放假/节假日、奖助学金/评优、教学/课程/考试、培养/学籍/报到、学位/答辩/毕业、就业/实习/竞赛、讲座/活动）
+3. 命中 `noise.keywords` 的通知（调停课、监考、借教室…）归入「常规通知」，只统计条数
+4. **增量去重**：已报过的链接记在 `state.json` 的 `school.seen`（默认保留 90 天），素材只详列「新增」，其余只列一行备查
+5. 新增且属于重点标签的通知，会顺带抓一次正文，截前 450 字放进素材（`fetchDetails`）
+
+常用配置（`~/.acp-claw/daily-report/config.json` 的 `school` 块）：
+
+- `windowDays`：时间窗（默认 7 天）
+- `sources[]`：`site`/`label`/`url`/`parser`（`vsb` | `gr` | `xgbSearch`）、`{enabled:false}` 可临时停掉某个源
+- `tags[]`：`{label, emoji, keywords}`，按顺序取第一个命中项做分组
+- `noise.keywords`：低价值通知关键词
+- `fetchDetails`：`{enabled, max, maxChars}` 控制正文抓取的条数与长度
+- `detailTags`：哪些标签需要抓正文
+
+> 首次跑建议 `node $CLI school --days 30`，把近一个月的存量一次性标记为已读，之后每天就只报真正的新通知。
 
 ## 投递说明
 

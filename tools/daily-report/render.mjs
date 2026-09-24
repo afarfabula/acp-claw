@@ -175,3 +175,68 @@ export function renderNews(data, { timeZone = 'Asia/Shanghai' } = {}) {
 
   return out.join('\n');
 }
+
+/** 学校/学院通知素材：按「关注分类」分组，新增优先，噪音只统计条数 */
+export function renderSchool(data, { timeZone = 'Asia/Shanghai' } = {}) {
+  const out = [];
+  const stamp = data.stamp ?? '';
+  out.push(`# 学校通知素材 ${stamp}（${timeZone}）`);
+  const s = data.summary ?? {};
+  out.push(
+    `窗口：最近 ${data.windowDays} 天 ｜ 抓取 ${s.total ?? 0} 条 ｜ **新增 ${s.newCount ?? 0} 条**` +
+      `（其中常规/低价值 ${s.newNoise ?? 0} 条）`,
+  );
+  if (data.failures?.length) out.push(`\n> 失败项：${data.failures.join(' | ')}`);
+
+  const newItems = (data.newItems ?? []).filter((it) => !it.noise);
+  if (!newItems.length) {
+    out.push('\n**本期没有新增通知**（窗口内所有条目此前已报过）');
+  }
+
+  const tagOrder = (data.tags ?? []).map((t) => t.label);
+  const bucket = new Map();
+  for (const it of newItems) {
+    const primary = tagOrder.find((t) => it.tags.includes(t)) ?? '其它';
+    if (!bucket.has(primary)) bucket.set(primary, []);
+    bucket.get(primary).push(it);
+  }
+
+  for (const label of [...tagOrder, '其它']) {
+    const items = bucket.get(label);
+    if (!items?.length) continue;
+    const emoji = (data.tags ?? []).find((t) => t.label === label)?.emoji ?? '📌';
+    out.push(`\n## ${emoji} ${label}（新增 ${items.length} 条）`);
+    for (const it of items) {
+      out.push(`\n- 🆕 **${it.title}**`);
+      out.push(`  - 来源：${it.site}${it.section ? `·${it.section}` : ''} ｜ 发布：${it.date ?? '日期未知'} ｜ 标签：${it.tags.join('/')}`);
+      out.push(`  - 链接：${it.url}`);
+      if (it.detail) out.push(`  - 摘要：${it.detail}`);
+      else if (it.detailError) out.push(`  - 摘要：抓取失败（${it.detailError}）`);
+    }
+  }
+
+  const newNoise = (data.newItems ?? []).filter((it) => it.noise);
+  if (newNoise.length) {
+    out.push(`\n## 🗑 常规通知（新增 ${newNoise.length} 条，一般不用进简报）`);
+    for (const it of newNoise) {
+      out.push(`- ${it.title} ｜ ${it.site} ｜ ${it.date ?? '日期未知'} ｜ ${it.url}`);
+    }
+  }
+
+  const oldOnes = (data.items ?? []).filter((it) => !it.isNew && !it.noise);
+  if (oldOnes.length) {
+    out.push(`\n## 窗口内已报过的条目（${oldOnes.length} 条，仅供去重参考）`);
+    for (const it of oldOnes.slice(0, 20)) {
+      out.push(`- ${it.date ?? ''} ${it.title} ｜ ${it.site}${it.section ? `·${it.section}` : ''}`);
+    }
+    if (oldOnes.length > 20) out.push(`- …另有 ${oldOnes.length - 20} 条`);
+  }
+
+  const failed = (data.sources ?? []).filter((x) => x.error);
+  if (failed.length) {
+    out.push('\n## 采集失败的源\n');
+    for (const x of failed) out.push(`- ${x.site}·${x.label}：${x.error}`);
+  }
+
+  return out.join('\n');
+}

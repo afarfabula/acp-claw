@@ -35,6 +35,38 @@
       "top": 8
     }
   },
+  "school": {
+    "enabled": true,
+    "windowDays": 7,
+    "maxPerSource": 30,
+    "seenKeepDays": 90,
+    "fetchDetails": { "enabled": true, "max": 6, "maxChars": 600 },
+    "detailTags": [
+      "放假/节假日",
+      "奖助学金/评优",
+      "教学/课程/考试",
+      "培养/学籍/报到",
+      "学位/答辩/毕业"
+    ],
+    "sources": [
+      { "site": "信通学院", "label": "研究生科", "url": "https://www.sice.uestc.edu.cn/index/tzgg/yjsk.htm", "parser": "vsb" },
+      { "site": "信通学院", "label": "教务科", "url": "https://www.sice.uestc.edu.cn/index/tzgg/jwk.htm", "parser": "vsb" },
+      { "site": "信通学院", "label": "学生科", "url": "https://www.sice.uestc.edu.cn/index/tzgg/xsk.htm", "parser": "vsb" },
+      { "site": "研究生院", "label": "重要公告", "url": "https://gr.uestc.edu.cn/tongzhi/118", "parser": "gr" },
+      { "site": "研究生院", "label": "教学管理", "url": "https://gr.uestc.edu.cn/tongzhi/119", "parser": "gr" },
+      { "site": "研究生院", "label": "学生管理", "url": "https://gr.uestc.edu.cn/tongzhi/122", "parser": "gr" },
+      { "site": "研究生院", "label": "奖助学金", "url": "https://gr.uestc.edu.cn/xuesheng/91", "parser": "gr" },
+      { "site": "研究生院", "label": "评奖评优", "url": "https://gr.uestc.edu.cn/sixiang/88", "parser": "gr" },
+      { "site": "研究生院", "label": "学位管理", "url": "https://gr.uestc.edu.cn/tongzhi/129", "parser": "gr" },
+      { "site": "研究生院", "label": "就业实践", "url": "https://gr.uestc.edu.cn/tongzhi/123", "parser": "gr" },
+      { "site": "学生工作部", "label": "奖学金", "url": "https://xgb.uestc.edu.cn/search?k=奖学金", "parser": "xgbSearch", "spa": true },
+      { "site": "学生工作部", "label": "助学金", "url": "https://xgb.uestc.edu.cn/search?k=助学金", "parser": "xgbSearch", "spa": true },
+      { "site": "学生工作部", "label": "放假通知", "url": "https://xgb.uestc.edu.cn/search?k=放假", "parser": "xgbSearch", "spa": true }
+    ],
+    "noise": {
+      "keywords": ["调停课", "调课", "停课", "补课", "监考", "考场", "借教室", "借用教室", "会议室", "教师培训", "职称", "基建", "停电", "维修"]
+    }
+  },
   "news": {
     "windowHours": 30,
     "maxItems": 40,

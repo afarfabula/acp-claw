@@ -4,6 +4,9 @@
  *
  *   node cli.mjs collect [--out <file>] [--json]     采集素材 → data/<date>.json + <date>-brief.md，默认打印素材 Markdown
  *   node cli.mjs news [--json]                       采集 AI 新闻素材 → data/<date>-news.json + <date>-news.md
+ *   node cli.mjs school [--json] [--days N] [--all]  采集学校/学院通知（信通学院+研究生院+学工部）
+ *                                                    → data/<date>-school.json + <date>-school.md
+ *                                                    （默认只标「新增」并记录已读；--all 忽略已读，--no-detail 不抓正文）
  *   node cli.mjs publish --file <md> [--doc auto|<url|id>] [--chat <chatId>]
  *                                                    把日报写入飞书文档（默认按月份自动建/找文档）；--chat 时同时发群
  *   node cli.mjs config                              打印当前运行时配置路径与内容
@@ -27,8 +30,9 @@ import {
   collectProjects,
   collectWeather,
 } from './collect.mjs';
-import { renderBrief, renderNews } from './render.mjs';
+import { renderBrief, renderNews, renderSchool } from './render.mjs';
 import { collectNews } from './news.mjs';
+import { collectSchool } from './school.mjs';
 import {
   appendDoc,
   docTitleFromPattern,
@@ -174,9 +178,58 @@ async function cmdNews(flags) {
   if (failures.length) process.stderr.write(`[news] 失败项: ${failures.join(' | ')}\n`);
 }
 
+async function cmdSchool(flags) {
+  const { config: cfg, missing } = loadConfig();
+  if (missing) console.error('⚠️  未找到运行时配置，使用仓库示例配置');
+  const failures = [];
+  const days = typeof flags.days === 'string' ? Number(flags.days) : undefined;
+  const school = await collectSchool(cfg, failures, {
+    days: Number.isFinite(days) ? days : undefined,
+    markSeen: !flags.all,
+    fetchDetails: flags['no-detail'] ? false : undefined,
+  });
+  const parts = localParts(new Date(), cfg.timezone);
+  school.stamp = parts.stamp;
+  const brief = renderSchool(school, { timeZone: cfg.timezone });
+  const dataDir = resolveDataDir(cfg);
+  const jsonPath = join(dataDir, `${parts.date}-school.json`);
+  const briefPath = join(dataDir, `${parts.date}-school.md`);
+  writeFileSync(jsonPath, JSON.stringify(school, null, 2), 'utf-8');
+  writeFileSync(briefPath, brief, 'utf-8');
+  if (flags.json) {
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          jsonPath,
+          briefPath,
+          summary: school.summary,
+          newItems: school.newItems.map((it) => ({
+            site: it.site,
+            section: it.section,
+            date: it.date,
+            title: it.title,
+            url: it.url,
+            tags: it.tags,
+            noise: it.noise,
+          })),
+          sources: school.sources,
+          failures,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  } else {
+    process.stdout.write(`${brief}\n`);
+    process.stderr.write(`\n[school] 素材已写入 ${briefPath} / ${jsonPath}\n`);
+  }
+  if (failures.length) process.stderr.write(`[school] 失败项: ${failures.join(' | ')}\n`);
+}
+
 const COMMANDS = {
   collect: cmdCollect,
   news: cmdNews,
+  school: cmdSchool,
   publish: cmdPublish,
   config: cmdConfig,
 };
