@@ -288,6 +288,9 @@ npm test
 [`skills/feishu-doc/SKILL.md`](./skills/feishu-doc/SKILL.md)，
 用法与权限说明见 [`tools/feishu-doc/README.md`](./tools/feishu-doc/README.md)。
 非官方补充工具（GPU 监控）见 [`tools/gpu-monitor`](./tools/gpu-monitor)。
+[`tools/codex-locks`](./tools/codex-locks) 用来排查/清理占着 Codex 会话写锁的进程——
+`codex resume` 报 `thread ... already has an active writer` 时，它能列出谁占着锁，
+并把已经不在你终端里的那些占用者放掉。
 
 ### 如何贡献新 Channel
 

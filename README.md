@@ -289,6 +289,9 @@ tables, search wikis and bulk-reorganize the doc tree. Companion skill lives in
 [`skills/feishu-doc/SKILL.md`](./skills/feishu-doc/SKILL.md); usage and scopes are
 documented in [`tools/feishu-doc/README.md`](./tools/feishu-doc/README.md).
 An unofficial add-on (GPU monitor) lives in [`tools/gpu-monitor`](./tools/gpu-monitor).
+[`tools/codex-locks`](./tools/codex-locks) is a small helper for the
+`thread ... already has an active writer` error: it lists which processes hold a Codex
+session's write lock and can release the ones that are no longer attached to your terminal.
 
 ### How to Add a Channel
 
