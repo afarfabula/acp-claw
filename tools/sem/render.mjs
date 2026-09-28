@@ -1,5 +1,8 @@
 /** 输出渲染：终端表格 + 预览/结果文本（按显示宽度对齐，兼容中英文混排）。 */
 
+import { holderBadge, holderKind } from './locks.mjs';
+import { holderStyle } from './style.mjs';
+
 export function charWidth(cp) {
   if (
     cp >= 0x1100 &&
@@ -20,9 +23,15 @@ export function charWidth(cp) {
   return 1;
 }
 
+/** 去掉 ANSI 颜色/控制序列。 */
+export function stripAnsi(text) {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: 需要匹配 ANSI 转义
+  return String(text).replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+}
+
 export function displayWidth(text) {
   let width = 0;
-  for (const ch of String(text)) width += charWidth(ch.codePointAt(0));
+  for (const ch of stripAnsi(text)) width += charWidth(ch.codePointAt(0));
   return width;
 }
 
@@ -68,30 +77,45 @@ export function formatTime(ms) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-export function holderDetail(holder, callerTty = null) {
+export function holderDetail(
+  holder,
+  callerTty = null,
+  { style = null, uid = null } = {},
+) {
   if (holder.missing) return `PID ${holder.pid}（已退出）`;
+  const kind = holderKind(holder, { tty: callerTty, uid });
+  const paint = style ? holderStyle(style, kind) : (t) => t;
   const bits = [
     `PID ${holder.pid}`,
+    style && kind !== 'plain' ? paint(holderBadge(holder, kind)) : null,
     holder.tty ? `tty ${holder.tty}` : '无终端',
     holder.source ?? '未知来源',
     `已占 ${formatDuration(holder.ageMs)}`,
-  ];
+  ].filter(Boolean);
   if (holder.server) bits.push('app-server');
   let line = bits.join(' · ');
+  if (style && kind === 'current') line = style.green(line);
   if (callerTty && holder.tty === callerTty) line += '  ← 你当前终端';
   return line;
 }
 
-export function renderList(snap, { callerTty = null, all = false } = {}) {
+export function renderList(
+  snap,
+  { callerTty = null, all = false, style = null, uid = null } = {},
+) {
   const rows = snap.sessions.filter((s) => (all ? true : s.locked));
   const locked = snap.sessions.filter((s) => s.locked).length;
   // 同一分钟里建的会话前 8 位可能相同，这种情况多显示几位
   const prefixes = rows.map((s) => s.threadId.slice(0, 8));
   const idWidth = prefixes.some((p, i) => prefixes.indexOf(p) !== i) ? 13 : 8;
   const lines = [];
-  lines.push(`Codex 会话写锁 · ${snap.lockDir}`);
   lines.push(
-    `共 ${snap.sessions.length} 个锁，${locked} 个被占用 · ${snap.sessions.length - locked} 个空闲` +
+    style
+      ? `${style.bold('sem')} ${style.gray('· 会话写锁')} ${style.gray(snap.lockDir)}`
+      : `Codex 会话写锁 · ${snap.lockDir}`,
+  );
+  lines.push(
+    `${style ? style.gray('') : ''}共 ${snap.sessions.length} 个锁，${locked} 个被占用 · ${snap.sessions.length - locked} 个空闲` +
       (callerTty
         ? ` · 当前终端 ${callerTty}`
         : ' · 当前终端 无（非 tty 环境）'),
@@ -110,35 +134,59 @@ export function renderList(snap, { callerTty = null, all = false } = {}) {
 
   for (const s of rows) {
     const marker = s.locked ? '●' : '○';
+    const kind = s.locked
+      ? holderKind(primaryHolderOf(s), { tty: callerTty, uid })
+      : 'free';
+    const paint = style
+      ? s.locked
+        ? holderStyle(style, kind)
+        : style.gray
+      : (t) => t;
     const name = pad(truncate(s.name ?? '(无标题)', 24), 26);
     let detail = '—';
     if (s.locked) {
-      detail = s.holders.map((h) => holderDetail(h, callerTty)).join('  ;  ');
+      detail = s.holders
+        .map((h) => holderDetail(h, callerTty, { style, uid }))
+        .join(style ? '  ' : '  ;  ');
       const last = s.lastActivityMs ?? s.updatedAt;
-      if (last) detail += ` · 最后活动 ${formatDuration(snap.now - last)}前`;
+      if (last) {
+        detail += style
+          ? style.gray(` · ${formatDuration(snap.now - last)}前`)
+          : ` · 最后活动 ${formatDuration(snap.now - last)}前`;
+      }
     }
     lines.push(
-      `${marker} ${pad(s.threadId.slice(0, idWidth), idWidth)}  ${name}${detail}`,
+      `${paint(marker)} ${style ? style.dim(pad(s.threadId.slice(0, idWidth), idWidth)) : pad(s.threadId.slice(0, idWidth), idWidth)}  ${name}${detail}`,
     );
   }
 
   if (!all && snap.sessions.length > locked) {
     lines.push('');
-    lines.push(
-      `（另有 ${snap.sessions.length - locked} 个空闲锁文件，--all 可一起列出）`,
-    );
+    const hint = `（另有 ${snap.sessions.length - locked} 个空闲锁文件，--all 可一起列出）`;
+    lines.push(style ? style.gray(hint) : hint);
   }
   return lines.join('\n');
 }
 
+function primaryHolderOf(session) {
+  return (
+    session.holders.find((h) => h.interactive) ?? session.holders[0] ?? null
+  );
+}
+
 /** 清理预览/结果：每个待处理项两行（会话一行、进程一行）。 */
-export function renderTargets(targets, { heading = '将结束这些进程' } = {}) {
-  const lines = [`${heading}（${targets.length} 个）：`];
+export function renderTargets(
+  targets,
+  { heading = '将结束这些进程', style = null } = {},
+) {
+  const lines = [
+    `${style ? style.bold(heading) : heading}（${targets.length} 个）：`,
+  ];
   for (const t of targets) {
     lines.push(
-      `  · ${t.threadId.slice(0, 8)}  ${truncate(t.name ?? '(无标题)', 26)}`,
+      `  ${style ? style.red('·') : '·'} ${t.threadId.slice(0, 8)}  ${truncate(t.name ?? '(无标题)', 26)}`,
     );
-    lines.push(`    ${holderDetail(t.holder)}`);
+    lines.push(`    ${holderDetail(t.holder, null, { style })}`);
   }
   return lines.join('\n');
 }

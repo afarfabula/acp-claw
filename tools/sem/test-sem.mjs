@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * codex-locks 自测：node test-locks.mjs
+ * sem 自测：node test-sem.mjs
  *
  * 全部在临时 CODEX_HOME 里做，用自己 fork 出来的进程模拟「占着锁的会话」，
  * 不会碰真实的 ~/.codex（也不会误杀你的会话）。
@@ -27,7 +27,15 @@ import {
   stripPreamble,
   ttyName,
 } from './locks.mjs';
-import { formatDuration, pad, truncate } from './render.mjs';
+import {
+  displayWidth,
+  formatDuration,
+  pad,
+  stripAnsi,
+  truncate,
+} from './render.mjs';
+import { createStyle } from './style.mjs';
+import { rowLine } from './tui.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI = join(here, 'cli.mjs');
@@ -142,6 +150,78 @@ checkTrue(
   'shortCwd 收敛到 ~ 或末两段',
   shortCwd(`${process.env.HOME ?? '/root'}/a/b`).startsWith('~') ||
     shortCwd('/a/b/c') === '…/b/c',
+);
+
+console.log('\nTUI 行渲染');
+const styleOn = createStyle(true);
+const styleOff = createStyle(false);
+const tuiNow = Date.now();
+const tuiHolder = {
+  pid: 1234,
+  tty: 'pts/9',
+  source: 'code-server',
+  ageMs: 3 * 3600_000 + 120_000,
+};
+const tuiRow = {
+  threadId: 'dddddddd-1111-4111-8111-111111111111',
+  name: '一个很长的中文会话标题用来测试截断行为',
+  locked: true,
+  kind: 'plain',
+  holders: [tuiHolder],
+  primary: tuiHolder,
+  lastActivityMs: tuiNow - 60_000,
+  snapNow: tuiNow,
+};
+check(
+  '宽布局：整行宽度正好等于给定值',
+  displayWidth(
+    rowLine(tuiRow, {
+      width: 100,
+      wide: true,
+      style: styleOff,
+      selected: false,
+    }),
+  ),
+  100,
+);
+check(
+  '窄布局：整行宽度正好等于给定值',
+  displayWidth(
+    rowLine(tuiRow, {
+      width: 70,
+      wide: false,
+      style: styleOff,
+      selected: false,
+    }),
+  ),
+  70,
+);
+check(
+  '带颜色 + 选中：ANSI 不影响宽度',
+  displayWidth(
+    rowLine(tuiRow, { width: 70, wide: false, style: styleOn, selected: true }),
+  ),
+  70,
+);
+checkTrue(
+  '选中行上了底色',
+  rowLine(tuiRow, {
+    width: 70,
+    wide: false,
+    style: styleOn,
+    selected: true,
+  }).includes('\x1b[48;5;236m'),
+);
+check('stripAnsi 去掉颜色', stripAnsi(styleOn.red('abc')), 'abc');
+check(
+  '短名字也补齐到整宽',
+  displayWidth(
+    rowLine(
+      { ...tuiRow, name: '短' },
+      { width: 60, wide: false, style: styleOff, selected: false },
+    ),
+  ),
+  60,
 );
 
 console.log('\nselectCleanTargets');

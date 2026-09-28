@@ -76,6 +76,21 @@ export function listPids() {
   }
 }
 
+/** 当前进程所在的终端（pts/15）；非 tty 环境返回 null。 */
+export function callerTty() {
+  for (const fd of [0, 1, 2]) {
+    try {
+      const m = readlinkSync(`/proc/self/fd/${fd}`).match(
+        /^\/dev\/(pts\/\d+|tty\d+)$/,
+      );
+      if (m) return m[1];
+    } catch {
+      // 忽略
+    }
+  }
+  return null;
+}
+
 function procStat(pid) {
   let raw;
   try {
@@ -550,6 +565,43 @@ export function ancestorPids(pid, table) {
     cur = info.ppid;
   }
   return set;
+}
+
+/** 会话/持有者分类：current（你正在用的）/ bot（后台 app-server）/ other-user / plain。 */
+export function holderKind(holder, { tty = null, uid = null } = {}) {
+  if (!holder) return 'free';
+  if (holder.tty && holder.tty === tty) return 'current';
+  if (!holder.interactive) return 'bot';
+  if (uid != null && holder.uid != null && holder.uid !== uid)
+    return 'other-user';
+  return 'plain';
+}
+
+export function holderBadge(holder, kind) {
+  switch (kind) {
+    case 'current':
+      return '你当前终端';
+    case 'bot':
+      return '机器人会话';
+    case 'other-user':
+      return '其他用户';
+    default:
+      return holder?.comm ?? 'codex';
+  }
+}
+
+/** 挑一个「代表」持有者：优先同用户、能结束的那个进程。 */
+export function primaryHolder(session, { uid = null } = {}) {
+  const holders = session?.holders ?? [];
+  return (
+    holders.find(
+      (h) =>
+        isKillableComm(h.comm) &&
+        (uid == null || h.uid == null || h.uid === uid),
+    ) ??
+    holders[0] ??
+    null
+  );
 }
 
 /**

@@ -1,19 +1,26 @@
 #!/usr/bin/env node
 /**
- * codex-locks —— 列出 / 清理占着 Codex 会话写锁的进程
+ * sem —— Codex 会话管理器（Session Manager）
  *
- *   node cli.mjs list [--all] [--json]          列出会话写锁与持有者（默认只列被占用的）
- *   node cli.mjs free <threadId|前缀> [--yes]   释放指定会话的锁（结束持有它的进程）
- *   node cli.mjs clean [--yes] [选项]           清理「不在当前终端」的占用者（默认只预览）
+ *   sem                              交互式界面（TTY）；非 TTY 时等价于 sem list
+ *   sem list|ls [--all] [--json]     列出会话写锁与持有者（默认只列被占用的）
+ *   sem free <threadId|前缀> [--yes] 释放指定会话的锁（结束持有它的进程）
+ *   sem clean [--yes] [选项]         清理「不在当前终端」的占用者（默认只预览）
+ *   sem tui                          显式进入交互式界面
+ *   sem help | sem version           帮助 / 版本
+ *
+ * 交互式界面按键：↑↓ 或 j/k 选择 · Enter/f 释放 · c 清理 · a 显示全部 · r 刷新 · q 退出
  *
  * 选项：
  *   --codex-home <dir>   Codex 目录（默认 $CODEX_HOME 或 ~/.codex）
  *   --keep <tty|pid>     额外保留的终端/进程（可重复：--keep pts/15 --keep 12345）
  *   --include-servers    连后台 app-server 一起清（默认跳过——那通常是 acp-claw 机器人的会话）
  *   --idle <分钟>        只清「最后活动超过 N 分钟」的会话（默认 0，不限制）
+ *   --no-keep-newest     不在当前终端时也保留「最近打开的会话」（默认保留）
  *   --force              不检查进程名（默认只结束 codex / node 类进程）
  *   --yes                真正执行（默认只预览）
- *   --json               输出 JSON
+ *   --json               输出 JSON（仅 list/free/clean）
+ *   --no-color           关闭颜色（默认跟随 TTY；NO_COLOR 也生效）
  *
  * 背景：Codex 用 ~/.codex/thread-writer-locks/<threadId>.lock 的文件锁（flock）保证同一个会话
  * 只有一个写者。只要持有者进程没退出——哪怕只是 Ctrl+Z 暂停、或者浏览器标签页关了但
@@ -24,15 +31,20 @@
  * 注意：沙箱内 /proc 是隔离的、看不到宿主的进程，请在沙箱外（提权）运行本工具。
  */
 
-import { readFileSync, readlinkSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { releaseTargets } from './actions.mjs';
 import {
   ancestorPids,
+  callerTty,
   defaultCodexHome,
   isKillableComm,
   selectCleanTargets,
   snapshot,
 } from './locks.mjs';
 import { renderList, renderSkipped, renderTargets } from './render.mjs';
+import { createStyle, supportsColor } from './style.mjs';
+
+const VERSION = '0.2.0';
 
 function parseArgs(argv) {
   const positional = [];
@@ -72,65 +84,9 @@ function codexHomeOf(flags) {
     : defaultCodexHome();
 }
 
-/** 当前进程所在终端（pts/15）；非 tty 环境返回 null。 */
-function callerTty() {
-  for (const fd of [0, 1, 2]) {
-    try {
-      const m = readlinkSync(`/proc/self/fd/${fd}`).match(
-        /^\/dev\/(pts\/\d+|tty\d+)$/,
-      );
-      if (m) return m[1];
-    } catch {
-      // 忽略
-    }
-  }
-  return null;
-}
-
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function isAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err?.code === 'EPERM';
-  }
-}
-
-function waitForExit(pids, timeoutMs = 3000) {
-  const deadline = Date.now() + timeoutMs;
-  let alive = pids.filter((p) => p > 1 && isAlive(p));
-  while (alive.length > 0 && Date.now() < deadline) {
-    sleepSync(100);
-    alive = alive.filter((p) => isAlive(p));
-  }
-  return alive;
-}
-
-/** 逐个 SIGTERM；返回 {killed, failed}。 */
-function killAll(targets) {
-  const killed = [];
-  const failed = [];
-  for (const target of targets) {
-    const pid = target.holder.pid;
-    if (pid <= 1) {
-      failed.push({ ...target, error: '拒绝结束 pid<=1' });
-      continue;
-    }
-    try {
-      process.kill(pid, 'SIGTERM');
-      killed.push(target);
-    } catch (err) {
-      failed.push({
-        ...target,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-  return { killed, failed };
+function styleOf(flags) {
+  const enabled = flags['no-color'] ? false : supportsColor();
+  return createStyle(enabled);
 }
 
 function targetJson(t) {
@@ -146,20 +102,22 @@ function targetJson(t) {
   };
 }
 
-/** 从快照里取某个会话（支持 8 位前缀）。 */
+/** 从快照里取某个会话（支持 id 前缀）。 */
 function resolveSession(sessions, key) {
   const exact = sessions.filter((s) => s.threadId === key);
   if (exact.length > 0) return exact[0];
   const matches = sessions.filter((s) => s.threadId.startsWith(key));
   if (matches.length > 1) {
-    const list = matches.map((s) => s.threadId.slice(0, 8)).join(', ');
-    throw new Error(`前缀 ${key} 匹配到多个会话：${list}`);
+    const list = matches.map((s) => s.threadId.slice(0, 13)).join(', ');
+    throw new Error(
+      `前缀 ${key} 匹配到多个会话：${list}（用更长的前缀或完整 id）`,
+    );
   }
   return matches[0] ?? null;
 }
 
-/** 通用：预览 + 执行 + 复查。 */
-function runRelease({ codexHome, targets, skipped, apply, label }) {
+/** 预览 / 执行 / 复查，CLI 三个命令共用。 */
+function runRelease({ codexHome, targets, skipped, apply, label, style }) {
   const lines = [];
   if (targets.length === 0) {
     lines.push(`${label}：没有需要处理的进程。`);
@@ -167,6 +125,7 @@ function runRelease({ codexHome, targets, skipped, apply, label }) {
     lines.push(
       renderTargets(targets, {
         heading: apply ? `${label}（执行）` : `${label}（预览）`,
+        style,
       }),
     );
   }
@@ -184,37 +143,23 @@ function runRelease({ codexHome, targets, skipped, apply, label }) {
     };
   }
 
-  const { killed, failed } = killAll(targets);
-  const aliveAfter = waitForExit(killed.map((t) => t.holder.pid));
-  for (const pid of aliveAfter) {
+  const result = releaseTargets(codexHome, targets);
+  for (const pid of result.aliveAfter)
     lines.push(`⚠️ PID ${pid} 仍存活，可手动 kill -9 ${pid}`);
-  }
-  for (const item of failed)
+  for (const item of result.failed)
     lines.push(`⚠️ PID ${item.holder.pid} 结束失败：${item.error}`);
 
-  const after = snapshot(codexHome);
-  const touched = new Set(targets.map((t) => t.threadId));
-  const released = [];
-  const stillLocked = [];
-  for (const session of after.sessions) {
-    if (!touched.has(session.threadId)) continue;
-    if (session.locked)
-      stillLocked.push({
-        threadId: session.threadId,
-        holders: session.holders.map((h) => h.pid),
-      });
-    else released.push(session.threadId);
-  }
   lines.push('');
+  const released = result.released.map((id) => id.slice(0, 8)).join(', ');
   lines.push(
-    `已结束 ${killed.length} 个进程；释放锁 ${released.length} 个${released.length ? `：${released.map((id) => id.slice(0, 8)).join(', ')}` : ''}`,
+    `已结束 ${result.killed.length} 个进程；释放锁 ${result.released.length} 个${released ? `：${released}` : ''}`,
   );
-  if (stillLocked.length > 0) {
+  if (result.stillLocked.length > 0) {
     lines.push(
-      `仍有占用：${stillLocked.map((s) => `${s.threadId.slice(0, 8)}(pid ${s.holders.join('/')})`).join(', ')}`,
+      `仍有占用：${result.stillLocked.map((s) => `${s.threadId.slice(0, 8)}(pid ${s.holders.join('/')})`).join(', ')}`,
     );
   }
-  return { text: lines.join('\n'), released, stillLocked, killed };
+  return { text: lines.join('\n'), ...result };
 }
 
 function cmdList(flags) {
@@ -226,21 +171,30 @@ function cmdList(flags) {
     process.stdout.write(
       `${JSON.stringify({ callerTty: tty, ...rest }, null, 2)}\n`,
     );
-    return;
+    return { snap, tty };
   }
-  const lines = [renderList(snap, { callerTty: tty, all: Boolean(flags.all) })];
+  const style = styleOf(flags);
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  const lines = [
+    renderList(snap, { callerTty: tty, all: Boolean(flags.all), style, uid }),
+  ];
   if (snap.sessions.some((s) => s.locked)) {
     lines.push('');
-    lines.push('释放单个会话：node cli.mjs free <threadId>');
-    lines.push('清理不在当前终端的占用：node cli.mjs clean --yes');
+    lines.push(
+      style.gray(
+        '释放单个：sem free <id> · 批量清理：sem clean --yes · 交互界面：sem',
+      ),
+    );
   }
   process.stdout.write(`${lines.join('\n')}\n`);
+  return { snap, tty };
 }
 
 function cmdFree(flags, positional) {
   const key = positional[0];
-  if (!key) throw new Error('用法：free <threadId|前缀> [--yes]');
+  if (!key) throw new Error('用法：sem free <threadId|前缀> [--yes]');
   const codexHome = codexHomeOf(flags);
+  const style = styleOf(flags);
   const snap = snapshot(codexHome);
   const session = resolveSession(snap.sessions, key);
 
@@ -280,7 +234,8 @@ function cmdFree(flags, positional) {
     targets,
     skipped,
     apply: Boolean(flags.yes),
-    label: `释放 ${session.threadId.slice(0, 8)}`,
+    label: `释放 ${session.threadId.slice(0, 13)}`,
+    style,
   });
   if (flags.json) {
     process.stdout.write(
@@ -304,6 +259,7 @@ function cmdFree(flags, positional) {
 
 function cmdClean(flags) {
   const codexHome = codexHomeOf(flags);
+  const style = styleOf(flags);
   const snap = snapshot(codexHome);
   const tty = callerTty();
   const uid = typeof process.getuid === 'function' ? process.getuid() : null;
@@ -329,6 +285,7 @@ function cmdClean(flags) {
     skipped,
     apply: Boolean(flags.yes) && !flags['dry-run'],
     label: '清理不在当前终端的占用者',
+    style,
   });
   if (flags.json) {
     process.stdout.write(
@@ -349,49 +306,70 @@ function cmdClean(flags) {
   }
   const head = tty
     ? ''
-    : '提示：当前不在 tty 里，无法自动识别「你的终端」，清理前请先用 list 确认。\n\n';
+    : '提示：当前不在 tty 里，无法自动识别「你的终端」，清理前请先用 sem list 确认。\n\n';
   process.stdout.write(`${head}${result.text}\n`);
 }
 
-const COMMANDS = {
-  list: cmdList,
-  free: cmdFree,
-  unlock: cmdFree,
-  clean: cmdClean,
-};
-
-function main() {
-  const [cmd = 'list', ...rest] = process.argv.slice(2);
-  if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
-    const header = readFileSyncHelp();
-    process.stdout.write(`${header}\n`);
+async function cmdTui(flags) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    process.stderr.write('交互界面需要 TTY；这里改为 `sem list`。\n\n');
+    cmdList(flags);
     return;
   }
-  const handler = COMMANDS[cmd];
-  if (!handler)
-    throw new Error(`未知命令：${cmd}（可用：list / free / clean）`);
-  const { flags, positional } = parseArgs(rest);
-  handler(flags, positional);
+  const { runTui } = await import('./tui.mjs');
+  await runTui({ codexHome: codexHomeOf(flags) });
 }
 
-function readFileSyncHelp() {
-  // 直接复用文件头注释，避免两处维护
-  const source = readSource().replace(/^#!.*\n/, '');
+function cmdVersion() {
+  process.stdout.write(`sem ${VERSION}\ncodex home: ${defaultCodexHome()}\n`);
+}
+
+function helpText() {
+  const source = readFileSync(new URL(import.meta.url), 'utf8').replace(
+    /^#!.*\n/,
+    '',
+  );
   return source
     .split('*/')[0]
     .replace(/^\/\*\*?/, '')
     .replace(/^ \* ?/gm, '')
-    .trimEnd()
-    .replace(/\n{3,}/g, '\n\n');
+    .trim();
 }
 
-function readSource() {
-  return readFileSync(new URL(import.meta.url), 'utf8');
+async function main() {
+  const [cmd = '', ...rest] = process.argv.slice(2);
+  const { flags, positional } = parseArgs(rest);
+  switch (cmd) {
+    case '':
+    case 'tui':
+    case 'ui':
+      return cmdTui(flags);
+    case 'list':
+    case 'ls':
+      return cmdList(flags);
+    case 'free':
+    case 'unlock':
+    case 'release':
+      return cmdFree(flags, positional);
+    case 'clean':
+    case 'gc':
+      return cmdClean(flags);
+    case 'version':
+    case '--version':
+    case '-v':
+      return cmdVersion();
+    case 'help':
+    case '--help':
+    case '-h':
+      return process.stdout.write(`${helpText()}\n`);
+    default:
+      throw new Error(
+        `未知命令：${cmd}（可用：list / free / clean / tui / help）`,
+      );
+  }
 }
 
-try {
-  main();
-} catch (err) {
+main().catch((err) => {
   console.error(`❌ ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
-}
+});
