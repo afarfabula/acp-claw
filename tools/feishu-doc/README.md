@@ -8,10 +8,13 @@
 | 命令 | 说明 |
 | --- | --- |
 | `read <doc\|url>` | 读取文档纯文本（支持 docx / wiki 链接） |
-| `meta <doc>` / `blocks <doc>` | 文档信息 / 块列表（含 `block_id`，便于定点修改） |
+| `meta <doc>` / `blocks <doc>` | 文档信息 / 块列表（含 `block_id`，便于定点修改）；`blocks --json` 按文档顺序输出块 JSON |
+| `md <doc>` | 导出为 Markdown（保留标题级别 / 列表 / 链接 / 表格） |
 | `table <doc>` | 把文档内的表格按行列还原导出 |
 | `create --title X [--folder T]` | 创建文档 |
-| `append <doc> --md <markdown\|@file>` | 追加 Markdown（本地转换，支持标题/列表/引用/代码/分隔线/链接/加粗/**表格**） |
+| `append <doc> --md <markdown\|@file> [--index N] [--parent P]` | 追加/写入 Markdown（本地转换，支持标题/列表/引用/代码/分隔线/链接/加粗/**表格**）；`--index` 指定插入位置 |
+| `insert <doc> --md <markdown\|@file> --index N` | 在指定位置插入（`0` = 文档最前面；表格也走 `index`，不会被塞到文末） |
+| `delete-range <doc> --start S --end E [--yes]` | 删除根块区间 `[S, E)`（不加 `--yes` 只预览；内部按 50 个一批删） |
 | `update-block <doc> <block_id> --text X` | 修改指定块 |
 | `delete-block` / `delete <doc>` | 删除块 / 删除文档 |
 | `list` / `search <关键词>` | 列出云空间文件 / 搜索文档 |
@@ -66,6 +69,9 @@ node cli.mjs wiki-add <doc_id> --space <space_id>
 
 - **表格**：Markdown 管道表格（`| a | b |` + `|---|---|` 分隔行）会转成**飞书原生表格**（首行为表头）；
   表格必须连同单元格一起走「创建嵌套块」接口插入，因此 `append` 里表格是逐张插入的
+- **导出**：`md` 会把文档按真实顺序（page 块的 `children`）导出，链接还原成 `[文字](url)`、表格还原成管道表格，
+  适合「导出 → 本地改写 → 整体写回」
+- **区间删除**：`delete-range` 每次删 `[start, start+50)`，块会顺次前移，所以循环删同一区间即可清空
 - 写文档时，关键实验结果 / 对比数据 / 消融表一律用 Markdown 表格写，不要用纯文本堆数据
 
 - 调用飞书 API 需要联网；在受限沙箱里执行时需提权（sandbox escalation）

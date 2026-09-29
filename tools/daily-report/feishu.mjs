@@ -45,6 +45,32 @@ export function appendDoc(docRef, markdown) {
   return out;
 }
 
+/** 导出文档为 Markdown（保留标题级别 / 列表 / 链接 / 表格） */
+export function docMarkdown(docRef) {
+  return runDocCli(['md', docRef.url ?? docRef.id]);
+}
+
+/** 按文档顺序列出根块（含 type / text / children） */
+export function docBlocks(docRef) {
+  return JSON.parse(runDocCli(['blocks', docRef.url ?? docRef.id, '--json']));
+}
+
+/** 在 index 处插入 Markdown（0 = 文档最前面） */
+export function insertDocMarkdown(docRef, markdown, index) {
+  const file = join(tmpdir(), `daily-report-insert-${Date.now()}.md`);
+  writeFileSync(file, markdown, 'utf-8');
+  return runDocCli(['insert', docRef.url ?? docRef.id, '--md', `@${file}`, '--index', String(index)]);
+}
+
+/** 删除根块的 [start, end) 区间 */
+export function deleteDocRange(docRef, start, end) {
+  if (end <= start) return '';
+  return runDocCli([
+    'delete-range', docRef.url ?? docRef.id,
+    '--start', String(start), '--end', String(end), '--yes',
+  ]);
+}
+
 /**
  * 应用身份发消息（备用通道；正常路径是定时任务直接把最终回复发到群里）
  * receiveIdType: 'chat_id'（群）或 'open_id'/'user_id'（单聊）

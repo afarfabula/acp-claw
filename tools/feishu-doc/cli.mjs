@@ -6,10 +6,16 @@
  *   node cli.mjs read <doc_id|url>                 读取文档纯文本内容
  *   node cli.mjs meta <doc_id|url>                 读取文档标题/版本
  *   node cli.mjs blocks <doc_id|url>               列出文档块（含 block_id，便于定点修改）
+ *   node cli.mjs blocks <doc_id|url> --json        按文档顺序输出块 JSON（含 heading 级别与链接）
+ *   node cli.mjs md <doc_id|url>                   导出为 Markdown（保留标题级别/列表/链接/表格）
  *   node cli.mjs table <doc_id|url> [--index N]    导出文档里的表格（按行列还原）
  *   node cli.mjs create --title <标题> [--folder <folder_token>]
- *   node cli.mjs append <doc_id|url> --md <markdown|@文件路径> [--use-convert]
+ *   node cli.mjs append <doc_id|url> --md <markdown|@文件路径> [--index N] [--parent <block_id>] [--use-convert]
  *                                                （支持 Markdown 管道表格 → 飞书原生表格）
+ *   node cli.mjs insert <doc_id|url> --md <markdown|@文件路径> --index N [--parent <block_id>]
+ *                                                在指定位置插入 Markdown（0 = 文档最前面）
+ *   node cli.mjs delete-range <doc_id|url> --start S --end E [--parent <block_id>] [--yes]
+ *                                                删除子块区间 [S, E)（不加 --yes 只预览）
  *   node cli.mjs update-block <doc_id> <block_id> --text <文本>
  *   node cli.mjs delete-block <doc_id> <block_id> --parent <parent_block_id> [--index N]
  *   node cli.mjs list [--folder <folder_token>]
@@ -313,6 +319,49 @@ async function rootChildCount(id) {
   return (data.items ?? []).length;
 }
 
+/** 把「本地 Markdown → 块」列表写到 parent 的 index 位置（表格走嵌套块接口，其余分批） */
+async function insertBlockItems(docIdValue, parentId, startIndex, items) {
+  const BATCH = 40;
+  let index = startIndex;
+  let last;
+  let count = 0;
+  let tableSeq = 0;
+  let i = 0;
+  while (i < items.length) {
+    if (items[i].__tableRows) {
+      last = await insertTable(docIdValue, parentId, index, items[i].__tableRows, `t${Date.now()}${tableSeq}`);
+      index += 1;
+      count += 1;
+      tableSeq += 1;
+      i += 1;
+      continue;
+    }
+    const chunk = [];
+    while (i < items.length && !items[i].__tableRows && chunk.length < BATCH) {
+      chunk.push(items[i]);
+      i += 1;
+    }
+    last = await api(`/docx/v1/documents/${docIdValue}/blocks/${parentId}/children`, {
+      method: 'POST',
+      body: { children: chunk, index },
+    });
+    index += chunk.length;
+    count += chunk.length;
+  }
+  return { count, tables: tableSeq, revision: last?.document_revision_id };
+}
+
+async function cmdInsertBlocks([input], flags) {
+  if (flags.index === undefined) throw new Error('需要 --index <N>（0 = 文档最前面）');
+  const id = await docId(input);
+  const parent = flags.parent ? await docId(flags.parent) : id;
+  const md = readText(flags.md);
+  const items = await markdownToBlocks(md, Boolean(flags['use-convert']));
+  const index = Number(flags.index);
+  const r = await insertBlockItems(id, parent, index, items);
+  console.log(`已在 index ${index} 插入 ${r.count} 个块（含表格 ${r.tables} 张），文档版本 → ${r.revision}`);
+}
+
 const BLOCK_KEY_BY_TYPE = {
   1: 'page', 2: 'text', 3: 'heading1', 4: 'heading2', 5: 'heading3', 6: 'heading4',
   7: 'heading5', 8: 'heading6', 12: 'bullet', 13: 'ordered', 14: 'code', 15: 'quote',
@@ -342,6 +391,92 @@ function blockText(block) {
     .join('');
 }
 
+/** 块内文本 → Markdown（把链接还原成 [文字](url)、加粗还原成 **文字**） */
+function inlineMarkdown(block) {
+  if (!block) return '';
+  const key = BLOCK_KEY_BY_TYPE[block.block_type];
+  const elements = block[key]?.elements ?? [];
+  return elements
+    .map((e) => {
+      const run = e.text_run;
+      if (!run) return e.mention_doc?.title ?? e.file?.name ?? '';
+      let text = run.content ?? '';
+      const url = run.text_element_style?.link?.url ?? run.text_element_style?.link?.url_unencoded;
+      if (url) return `[${text}](${decodeURI(String(url))})`;
+      if (run.text_element_style?.bold) return `**${text}**`;
+      return text;
+    })
+    .join('');
+}
+
+/** 表格块（31）→ Markdown 管道表格 */
+function tableMarkdown(block, byId) {
+  const { row_size: rows, column_size: cols } = block.table?.property ?? {};
+  if (!rows || !cols) return '';
+  const cells = (block.children ?? []).map((cid) => byId.get(cid));
+  const cellText = (i) => {
+    const cell = cells[i];
+    const s = (cell?.children ?? [])
+      .map((cid) => inlineMarkdown(byId.get(cid)))
+      .filter(Boolean)
+      .join(' / ');
+    return s.replace(/\|/g, '\\|').replace(/\n/g, ' ').trim();
+  };
+  const out = [];
+  for (let r = 0; r < rows; r += 1) {
+    const row = [];
+    for (let c = 0; c < cols; c += 1) row.push(cellText(r * cols + c));
+    out.push(`| ${row.join(' | ')} |`);
+    if (r === 0) out.push(`| ${Array.from({ length: cols }, () => '---').join(' | ')} |`);
+  }
+  return out.join('\n');
+}
+
+/** 按文档顺序（page 块的 children）展开块 */
+function flattenBlocks(all) {
+  const byId = new Map(all.map((b) => [b.block_id, b]));
+  const root = all.find((b) => b.block_type === 1) ?? all[0];
+  const ordered = [];
+  const seen = new Set();
+  const walk = (id) => {
+    const b = byId.get(id);
+    if (!b || seen.has(id)) return;
+    seen.add(id);
+    ordered.push(b);
+  };
+  for (const id of root?.children ?? []) walk(id);
+  // 兜底：page children 缺失时（部分文档），退化成接口返回顺序
+  if (!ordered.length) for (const b of all) if (b.block_type !== 1) ordered.push(b);
+  return { ordered, byId, root };
+}
+
+function blockToMarkdown(block, byId) {
+  const t = block.block_type;
+  if (t === 22) return '---';
+  if (t === 31) return tableMarkdown(block, byId);
+  const text = inlineMarkdown(block);
+  if (t === 3) return `# ${text}`;
+  if (t === 4) return `## ${text}`;
+  if (t === 5) return `### ${text}`;
+  if (t === 6) return `#### ${text}`;
+  if (t === 7) return `##### ${text}`;
+  if (t === 8) return `###### ${text}`;
+  if (t === 12) return `- ${text}`;
+  if (t === 13) return `1. ${text}`;
+  if (t === 15) return `> ${text}`;
+  if (t === 17) return `- [ ] ${text}`;
+  if (t === 14) return `\`\`\`\n${text}\n\`\`\``;
+  return text;
+}
+
+function docToMarkdown(all) {
+  const { ordered, byId } = flattenBlocks(all);
+  return ordered
+    .map((b) => blockToMarkdown(b, byId))
+    .filter((s) => s !== '')
+    .join('\n\n');
+}
+
 const commands = {
   async read([input]) {
     const data = await api(`/docx/v1/documents/${await docId(input)}/raw_content`);
@@ -353,14 +488,35 @@ const commands = {
     console.log(JSON.stringify(data.document ?? data, null, 2));
   },
 
-  async blocks([input]) {
+  async blocks([input], flags) {
     const id = await docId(input);
     const all = await fetchAllBlocks(id);
+    if (flags.json) {
+      const { ordered, root } = flattenBlocks(all);
+      console.log(JSON.stringify({
+        document_id: id,
+        root_block_id: root?.block_id ?? id,
+        blocks: ordered.map((b) => ({
+          block_id: b.block_id,
+          type: b.block_type,
+          key: BLOCK_KEY_BY_TYPE[b.block_type] ?? '?',
+          text: blockText(b),
+          children: b.children ?? [],
+        })),
+      }, null, 2));
+      return;
+    }
     for (const b of all) {
       const key = BLOCK_KEY_BY_TYPE[b.block_type] ?? Object.keys(b).find((k) => k.endsWith('_block')) ?? '?';
       const text = blockText(b);
       console.log(`${b.block_id}  type=${b.block_type}(${key})  ${text.slice(0, 60)}`);
     }
+  },
+
+  async md([input]) {
+    const id = await docId(input);
+    const all = await fetchAllBlocks(id);
+    process.stdout.write(`${docToMarkdown(all)}\n`);
   },
 
   async table([input], flags) {
@@ -407,37 +563,45 @@ const commands = {
 
   async append([input], flags) {
     const id = await docId(input);
+    const parent = flags.parent ? await docId(flags.parent) : id;
+    // 单次插入块数有上限（约 50），普通块分批写入；表格带子块，须走「创建嵌套块」接口逐个插入
+    const index = flags.index !== undefined ? Number(flags.index) : await rootChildCount(parent);
     const md = readText(flags.md);
     const items = await markdownToBlocks(md, Boolean(flags['use-convert']));
-    // 单次插入块数有上限（约 50），普通块分批写入；表格带子块，须走「创建嵌套块」接口逐个插入
-    let index = await rootChildCount(id);
-    let last;
-    let count = 0;
-    let tableSeq = 0;
-    const BATCH = 40;
-    let i = 0;
-    while (i < items.length) {
-      if (items[i].__tableRows) {
-        last = await insertTable(id, id, index, items[i].__tableRows, `t${tableSeq}`);
-        index += 1;
-        count += 1;
-        tableSeq += 1;
-        i += 1;
-        continue;
-      }
-      const chunk = [];
-      while (i < items.length && !items[i].__tableRows && chunk.length < BATCH) {
-        chunk.push(items[i]);
-        i += 1;
-      }
-      last = await api(`/docx/v1/documents/${id}/blocks/${id}/children`, {
-        method: 'POST',
-        body: { children: chunk, index },
-      });
-      index += chunk.length;
-      count += chunk.length;
+    const r = await insertBlockItems(id, parent, index, items);
+    console.log(`已写入 ${r.count} 个块（含表格 ${r.tables} 张）到 index ${index}，文档版本 → ${r.revision}`);
+  },
+
+  async insert([input], flags) {
+    return cmdInsertBlocks([input], flags);
+  },
+
+  async 'delete-range'([input], flags) {
+    const id = await docId(input);
+    const parent = flags.parent ? await docId(flags.parent) : id;
+    const start = Number(flags.start);
+    const end = Number(flags.end);
+    if (!Number.isInteger(start) || !Number.isInteger(end) || end <= start) {
+      throw new Error('需要 --start <S> --end <E>（删除 [S, E)，0 起）');
     }
-    console.log(`已追加 ${count} 个块（含表格 ${tableSeq} 张），文档版本 → ${last?.document_revision_id}`);
+    if (!flags.yes) {
+      const all = await fetchAllBlocks(id);
+      const { ordered } = flattenBlocks(all);
+      const preview = ordered.slice(start, end).map((b) => `  ${blockText(b).slice(0, 50)}`).join('\n');
+      console.log(`预览：将删除 index ${start}..${end - 1} 共 ${end - start} 个块：\n${preview}\n（加 --yes 执行）`);
+      return;
+    }
+    let done = 0;
+    let last;
+    while (start + done < end) {
+      const size = Math.min(50, end - start - done);
+      last = await api(`/docx/v1/documents/${id}/blocks/${parent}/children/batch_delete`, {
+        method: 'DELETE',
+        body: { start_index: start, end_index: start + size },
+      });
+      done += size;
+    }
+    console.log(`已删除 ${done} 个块，文档版本 → ${last?.document_revision_id}`);
   },
 
   async 'update-block'([input, blockId], flags) {

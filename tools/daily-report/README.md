@@ -40,6 +40,11 @@ node $CLI school --no-detail          # 不抓正文摘要（更快，只用标�
 node $CLI publish --file <日报.md>     # 写入飞书文档（按 config.feishu.docTitlePattern 自动建/找当月文档）
 node $CLI publish --file <日报.md> --chat oc_xxx   # 同时用应用身份发一份到群
 node $CLI publish --file <新闻.md> --title "AI新闻 {yyyy}-{MM}" --open-id ou_xxx  # 归档 + 单聊推送
+node $CLI doc-tree                    # 解析文档里的简报条目（日期/栏目/首行），不改文档
+node $CLI doc-tree --file <md>        # 同上，但读本地 Markdown（离线排查用）
+node $CLI fixdoc --dry                # 预览「重排 + 规范化」结果（备份原稿并落盘规范化稿）
+node $CLI fixdoc                      # 重排/规范化当月文档（先备份，再整体重写）
+node $CLI fixdoc --fixes <json>       # 额外按 json 里的规则改日期 / 丢重复条目
 node $CLI config                      # 查看运行时配置
 ```
 
@@ -93,6 +98,22 @@ node $CLI config                      # 查看运行时配置
 - 发群消息走应用身份（`im/v1/messages`），要求机器人已在该群里
 - 日报正文默认由 cron 任务的最终回复发到群里，`publish --chat` 只是备用通道
 - 个人推送用 `publish --open-id <open_id>`（应用身份单聊），适合「AI 新闻」这类只发给自己的简报
+
+## 文档格式规范（2026-09-29 起）
+
+模型每天写的内容长短不一，为了让文档可读、可检索，`publish` 会先**规范化**再写入：
+
+- 每条简报固定为二级标题 `## YYYY-MM-DD HH:MM`；下面固定 7 个三级标题栏目，
+  顺序固定：☀️ 天气 → 🏫 学校通知 → 📰 AI 新闻 → 💰 DeepSeek 余额 → 📄 论文 → 🛠 Infra 动态 → 📌 项目进展
+- **按时间倒序**：最新一条永远在文档最上面（`publish` 读出文档结构、算出插入位置，
+  不再是无脑追加到文末）；同一天同一分钟重复推送会**覆盖**旧的那条，不留两份
+- 栏目名容错：`**💰 DeepSeek 余额**`、`💰 DeepSeek 余额：……`、`### 📄 论文` 这类写法都会被识别并统一；
+  正文里重复的栏目名前缀、模型自己加的落款行（`每日简报 2026-09-20（18:00 更新）`）会被去掉
+- 历史文档如果已经乱了（顺序错、标题级别不一），用 `fixdoc` 一键重排：
+  先把原稿备份到 `~/.acp-claw/daily-report/backups/doc-<日期>-<时间>-raw.md`，再把规范化结果整体写回
+- 个别条目缺少日期标题时，`fixdoc` 按前后条目推断（07/12/18 槽位）；确实推断不出来的，
+  可以写进 `doc-fixes.json`（`{"dates": [{"match": "正文片段", "stamp": "YYYY-MM-DD HH:MM"}], "drop": ["正文片段"]}`）
+  用 `--fixes` 指定
 
 ## 与 cron 配合
 

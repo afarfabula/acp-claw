@@ -40,6 +40,9 @@ node $CLI school --all               # 忽略已读状态全部当作新增（�
 node $CLI publish --file <md>        # 写入当月飞书文档
 node $CLI publish --file <md> --chat <chatId>   # 同时发群（备用通道）
 node $CLI publish --file <md> --title "AI新闻 {yyyy}-{MM}" --open-id <openId>  # 归档到新闻文档 + 推送单聊
+node $CLI doc-tree                   # 解析文档里的简报条目（日期/栏目/首行），只读
+node $CLI fixdoc --dry               # 预览重排/规范化结果（先备份原稿）
+node $CLI fixdoc                     # 重排 + 规范化当月文档（顺序错乱、格式不一时用）
 node $CLI config                     # 查看运行时配置
 ```
 
@@ -87,7 +90,9 @@ prompt 模板（保持简短，细节交给 skill 与脚本）：
    - 🛠 Infra 动态：框架新版本、值得关注的新项目（没有就明说「无」）
    - 📌 项目进展：按仓库列 24–48h 的新 commit 与未提交改动，指出「卡在哪 / 下一步」
 3. 把日报正文写入临时文件（如 `/tmp/daily-report-YYYY-MM-DD.md`）
-4. 运行 `node $CLI publish --file <那个文件>` 写入飞书文档（当月文档不存在会自动创建）
+4. 运行 `node $CLI publish --file <那个文件>` 写入飞书文档（当月文档不存在会自动创建）。
+   **不用自己写日期标题**：publish 会加 `## YYYY-MM-DD HH:MM`、把栏目名统一成固定 7 个、
+   按顺序排列，并把这条按**时间倒序**插到文档最上面；正文里也不要写落款/日期行
 5. **最终回复 = 日报正文 + 链接块**（cron 任务会用 `--chat-id` 把它发到群），结尾固定加上：
 
    ```text
