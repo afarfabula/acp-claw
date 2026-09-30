@@ -42,6 +42,9 @@ node $CLI publish --file <日报.md> --chat oc_xxx   # 同时用应用身份发�
 node $CLI publish --file <新闻.md> --title "AI新闻 {yyyy}-{MM}" --open-id ou_xxx  # 归档 + 单聊推送
 node $CLI doc-tree                    # 解析文档里的简报条目（日期/栏目/首行），不改文档
 node $CLI affil 2606.05688 2609.35457 # 查论文的完成单位（机构/团队）与作者
+node $CLI comments                   # 列 Paper Reading 文档的批注，标出「还没处理过」的（增量，记在 state.json）
+node $CLI comments --doc <url>        # 指定文档；--rebuild 重建基线（把现有批注全当已读）；--all 列全部
+node $CLI reply <doc> <commentId> --text "回答"   # 在批注里回复（默认同时标记「已解决」，并记进度不再重复处理）
 node $CLI doc-tree --file <md>        # 同上，但读本地 Markdown（离线排查用）
 node $CLI fixdoc --dry                # 预览「重排 + 规范化」结果（备份原稿并落盘规范化稿）
 node $CLI fixdoc                      # 重排/规范化当月文档（先备份，再整体重写）
@@ -63,6 +66,13 @@ node $CLI config                      # 查看运行时配置
 - `papers.hfDailyPapers`：HF 热榜（`base` 可指向镜像，`days` 默认 7：往回抓几天的点赞用于热度）
 - `papers.affiliation`：完成单位抓取（`enabled` 默认开，`maxPapers` 默认 8 只抓「最热」榜、`gapMs` 请求间隔）——
   数据来自 arXiv HTML 版作者块；2023-12 以前、或作者块被转换弄坏的论文可能取不到（此时用 `affil` 命令单独试）
+- `paperReading`：每周 Paper reading 文档的批注处理
+  - `docId`：当前这周的文档（换周时改这里）；`enabled`、`markSolved`（回复后是否自动标记「已解决」，默认 true）
+  - 进度记在 `state.json` 的 `paperReading.docs.<docId>.seenReplies`：只处理**没见过的回复**，
+    首次检查只会「建立基线」，不会把历史批注重做一遍
+  - 注意：飞书返回的回复里，机器人自己发的回复也带用户的 `user_id`（实测），所以**不能靠作者判断**，
+    一律以本地记录的 `reply_id` 为准；另外「用 API 新建的全文评论」不允许回复（`1069302`），
+    用户在文档里划词产生的批注可以正常回复
 - `infra.releases[]`：关注的 GitHub 仓库；`infra.trending`：近期高星新项目
 - `news.feeds[]`：新闻源（`label`/`url`/`limit`，可选 `keywords`、`windowHours`）；`news.hackerNews`：HN Algolia 关键词、`minPoints`、时间窗
 - `projects.local[]`：本地仓库（`name` + `path`）；`projects.github.user`：账号级 push 事件

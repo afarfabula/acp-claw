@@ -15,6 +15,10 @@
  *   node cli.mjs fixdoc [--dry] [--backup-dir <dir>]   重排/规范化已存在的日报文档（先备份再整体重写）
  *   node cli.mjs affil <id|url> [...] [--json]       查论文的「完成单位」（机构/团队）与作者
  *                                                    （解析 arXiv HTML 版的作者块；太老的论文可能没有 HTML 版）
+ *   node cli.mjs comments [<doc|url>] [--json] [--all] [--rebuild]
+ *                                                    列文档批注，并标出「还没处理过」的（增量，记在 state.json）
+ *   node cli.mjs reply <doc|url> <commentId> --text "…" [--no-solve]
+ *                                                    在批注里回复（默认同时标记「已解决」，并记进度不再重复处理）
  *   node cli.mjs config                              打印当前运行时配置路径与内容
  *
  * 配置：~/.acp-claw/daily-report/config.json（不存在则用仓库示例配置）
@@ -41,6 +45,14 @@ import { renderBrief, renderNews, renderSchool } from './render.mjs';
 import { collectNews } from './news.mjs';
 import { collectSchool } from './school.mjs';
 import { fetchAffiliation } from './affil.mjs';
+import {
+  listComments,
+  pickPending,
+  postReply,
+  renderComment,
+  resolveDocId,
+  setSolved,
+} from './comments.mjs';
 import {
   appendDoc,
   deleteDocRange,
@@ -223,6 +235,105 @@ function readDocEntries(flags) {
   return { cfg, parts, state, md, docRef, header, entries, fixes };
 }
 
+/** 读 `--text`：支持直接给字符串，也支持 @文件路径 */
+function readTextArg(v) {
+  if (typeof v !== 'string') return v;
+  if (v.startsWith('@')) return readFileSync(expandHome(v.slice(1)), 'utf-8');
+  return v;
+}
+
+/** 取本次要处理的文档：--doc > 位置参数 > 配置里的 paperReading.docId */
+function pickDocId(flags, positional, cfg) {
+  const raw = flags.doc ?? positional?.[0] ?? cfg.paperReading?.docId;
+  const id = resolveDocId(raw);
+  if (!id) {
+    throw new Error('没找到要处理的文档：用 --doc <url|id>，或在 config.json 里设 paperReading.docId');
+  }
+  return id;
+}
+
+/** 批注处理进度存在 state.json 的 paperReading.docs.<docId> 下 */
+function commentState(state, docId) {
+  state.paperReading ??= {};
+  state.paperReading.docs ??= {};
+  state.paperReading.docs[docId] ??= { seenReplies: [] };
+  return state.paperReading.docs[docId];
+}
+
+/** 列出批注，并标出「还没处理过」的（增量） */
+async function cmdComments(flags, positional) {
+  const { config: cfg } = loadConfig();
+  const docId = pickDocId(flags, positional, cfg);
+  const state = readState();
+  const rec = commentState(state, docId);
+  const firstTime = !rec.baselinedAt;
+  const comments = await listComments(docId);
+  const seen = new Set(rec.seenReplies ?? []);
+  const baseline = firstTime || Boolean(flags.rebuild);
+  const { pending, newlySeen } = pickPending(comments, seen, { baseline });
+
+  if (baseline) {
+    rec.seenReplies = [...new Set([...(rec.seenReplies ?? []), ...newlySeen])];
+    rec.baselinedAt = new Date().toISOString();
+  }
+  rec.lastCheck = new Date().toISOString();
+  rec.commentCount = comments.length;
+  writeState(state);
+
+  if (flags.json) {
+    process.stdout.write(
+      `${JSON.stringify({ docId, baseline, total: comments.length, pending: flags.all ? comments : pending }, null, 2)}\n`,
+    );
+    return;
+  }
+
+  const out = [
+    `文档 ${docId} ｜ 批注 ${comments.length} 条 ｜ 待处理 ${pending.length} 条` +
+      (baseline ? '（首次检查：已建立基线，历史批注不再重复处理）' : ''),
+  ];
+  const list = flags.all ? comments : pending;
+  if (!list.length) out.push('\n没有待处理的批注。');
+  for (const c of list) out.push(`\n${renderComment(c)}`);
+  if (pending.length) {
+    out.push(
+      '\n处理方式：先想好答案，再用下面这条命令回复（会自动记进度、默认标记「已解决」）：',
+      `  node ${new URL(import.meta.url).pathname} reply ${docId} <commentId> --text "回答内容"`,
+    );
+  }
+  process.stdout.write(`${out.join('\n')}\n`);
+}
+
+/** 回复某条批注（默认同时标记「已解决」） */
+async function cmdReply(flags, positional) {
+  const { config: cfg } = loadConfig();
+  const [rawDoc, commentId] = positional;
+  const docId = resolveDocId(rawDoc ?? flags.doc ?? cfg.paperReading?.docId);
+  if (!docId) throw new Error('用法: reply <doc|url> <commentId> --text "回答内容"');
+  if (!commentId) throw new Error('缺少 commentId（用 comments 命令可以看到）');
+  const text = readTextArg(flags.text ?? flags.md);
+  if (!text) throw new Error('缺少回复内容：--text "..." 或 --text @文件');
+
+  const replyId = await postReply(docId, commentId, text);
+  const solve = flags['no-solve'] !== true && cfg.paperReading?.markSolved !== false;
+  if (solve) await setSolved(docId, commentId, true);
+
+  // 记进度：这条批注下的所有回复都算已处理（否则下次触发会重复回复）
+  const state = readState();
+  const rec = commentState(state, docId);
+  const comments = await listComments(docId);
+  const thread = comments.find((c) => c.commentId === commentId);
+  rec.seenReplies = [
+    ...new Set([...(rec.seenReplies ?? []), replyId, ...(thread?.replies ?? []).map((r) => r.replyId)]),
+  ];
+  rec.lastReplyAt = new Date().toISOString();
+  rec.baselinedAt ??= new Date().toISOString();
+  writeState(state);
+
+  process.stdout.write(
+    `已回复批注 ${commentId}（reply ${replyId}）${solve ? '，并标记为已解决' : ''}；已记入进度，下次不会重复处理。\n`,
+  );
+}
+
 /** 查论文的「完成单位」（机构/团队）与作者：node cli.mjs affil <id|url> [...] */
 async function cmdAffil(flags, positional) {
   if (!positional.length) throw new Error('用法: affil <arxiv-id|url> [更多 id …] [--json]');
@@ -389,6 +500,8 @@ const COMMANDS = {
   news: cmdNews,
   school: cmdSchool,
   affil: cmdAffil,
+  comments: cmdComments,
+  reply: cmdReply,
   publish: cmdPublish,
   'doc-tree': cmdDocTree,
   fixdoc: cmdFixDoc,

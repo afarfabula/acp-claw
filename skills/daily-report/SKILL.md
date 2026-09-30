@@ -37,6 +37,10 @@ node $CLI school                     # 采集学校/学院通知素材 → data/
 node $CLI school --json              # 只输出路径、新增条数与各源状态
 node $CLI school --days 30           # 放宽时间窗（首次跑用，把存量一次性标为已读）
 node $CLI school --all               # 忽略已读状态全部当作新增（调试用）
+node $CLI comments                   # 列 Paper Reading 文档的批注，标出「还没处理过」的（增量，默认用 config 里的 docId）
+node $CLI comments --doc <url>       # 指定别的文档；--rebuild 重建基线（把现有批注全当已读）
+node $CLI reply <doc> <commentId> --text "回答"   # 在批注里回复（默认同时标记「已解决」，并记住进度）
+node $CLI affil 2606.05688           # 查论文的完成单位（机构/团队）与作者
 node $CLI publish --file <md>        # 写入当月飞书文档
 node $CLI publish --file <md> --chat <chatId>   # 同时发群（备用通道）
 node $CLI publish --file <md> --title "AI新闻 {yyyy}-{MM}" --open-id <openId>  # 归档到新闻文档 + 推送单聊

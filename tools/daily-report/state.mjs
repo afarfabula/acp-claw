@@ -32,6 +32,7 @@ const DEFAULTS = {
   infra: { hours: 48, releases: [], trending: { enabled: false } },
   projects: { hours: 48, github: { enabled: false }, local: [] },
   feishu: {},
+  paperReading: { enabled: true, docId: '', markSolved: true },
 };
 
 function deepMerge(base, override) {

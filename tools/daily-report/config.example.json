@@ -154,5 +154,11 @@
   "feishu": {
     "docTitlePattern": "每日简报 {yyyy}-{MM}",
     "chatId": "oc_f240829ae038b9d3e423560ad62ec053"
+  },
+  "paperReading": {
+    "enabled": true,
+    "docId": "",
+    "markSolved": true,
+    "note": "每周 Paper Reading 文档的 id（用 `comments` / `reply` 命令读写它的批注；docId 每次换周更新）"
   }
 }
