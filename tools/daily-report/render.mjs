@@ -56,28 +56,53 @@ export function renderBrief(data, { timeZone = 'Asia/Shanghai' } = {}) {
     );
   }
 
-  // 3. 论文
-  out.push(section(`3. 论文（arXiv 最近 ${papers?.hours ?? 24} 小时提交）`));
+  // 3. 论文（最新 + 最热）
+  const heatText = (p) => {
+    const h = p.heat ?? {};
+    const parts = [];
+    if (h.upvotes) parts.push(`${h.upvotes} 👍（HF 点赞）`);
+    if (h.citations) parts.push(`${h.citations} 次被引（OpenAlex）`);
+    return parts.length ? parts.join(' + ') : '暂无热度数据（太新）';
+  };
+  out.push(
+    section(`3. 论文（最新＝近 ${papers?.latestHours ?? papers?.hours ?? 24} 小时提交；最热＝近 ${papers?.hotDays ?? 7} 天按热度）`),
+  );
+  if (papers?.heatLegend) out.push(`> 热度口径：${papers.heatLegend}`);
   let paperCount = 0;
+  let hotCount = 0;
   for (const topic of papers?.topics ?? []) {
-    out.push(`\n### ${topic.label}（${topic.items.length} 篇）`);
-    if (!topic.items.length) {
-      out.push('- 无新论文');
-      continue;
+    out.push(`\n### ${topic.label}（窗口内命中 ${topic.total ?? topic.items?.length ?? 0} 篇）`);
+
+    out.push(`\n#### 🆕 最新（${topic.items?.length ?? 0} 篇）`);
+    if (!topic.items?.length) {
+      out.push('- 近 24 小时无新提交');
     }
-    for (const p of topic.items) {
+    for (const p of topic.items ?? []) {
       paperCount += 1;
       out.push(
-        `- **${trim(p.title, 160)}** ｜ ${trim(p.categories.join(','), 40)} ｜ ${p.published?.slice(0, 10)}`,
+        `- **${trim(p.title, 160)}** ｜ ${trim((p.categories ?? []).join(','), 40)} ｜ ${String(p.submittedAt ?? p.published ?? '').slice(0, 10)}`,
+      );
+      out.push(`  - 链接：${arxivUrl(p.url ?? p.id)}`);
+      out.push(`  - 摘要：${trim(p.summary, 420)}`);
+    }
+
+    out.push(`\n#### 🔥 最热（${topic.hot?.length ?? 0} 篇）`);
+    if (!topic.hot?.length) {
+      out.push('- 近 7 天窗口内没有拿到热度信号（HF 点赞 / OpenAlex 被引都为 0）');
+    }
+    for (const p of topic.hot ?? []) {
+      hotCount += 1;
+      out.push(
+        `- **${trim(p.title, 160)}** ｜ 热度 ${heatText(p)} ｜ ${trim((p.categories ?? []).join(','), 40)} ｜ ${String(p.submittedAt ?? p.published ?? '').slice(0, 10)}`,
       );
       out.push(`  - 链接：${arxivUrl(p.url ?? p.id)}`);
       out.push(`  - 摘要：${trim(p.summary, 420)}`);
     }
   }
-  out.push(`\n（本窗口共 ${paperCount} 篇被主题检索命中）`);
+  out.push(`\n（最新 ${paperCount} 篇 ／ 最热 ${hotCount} 篇）`);
 
   // 4. HF 热榜
-  out.push(section('4. HF Daily Papers 热榜（当日）'));
+  out.push(section(`4. HF Daily Papers 热榜（近 ${papers?.hfDays ?? 1} 天，按社区点赞）`));
   if (!papers?.hf?.length) {
     out.push('无数据');
   } else {

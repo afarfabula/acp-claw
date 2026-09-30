@@ -25,6 +25,34 @@ async function getText(url, { timeoutMs = 25000 } = {}) {
   return res.text();
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * arXiv 对同一 IP 限流（实测连续 3 次查询就返回 429），所以这里带退避重试。
+ * arXiv 官方建议请求间隔 3 秒以上。
+ */
+async function getTextRetry(url, { attempts = 3, timeoutMs = 30000, gapMs = 3500 } = {}) {
+  let lastErr;
+  for (let i = 0; i < attempts; i += 1) {
+    if (i > 0) await sleep(gapMs * i);
+    try {
+      const res = await fetch(url, {
+        headers: { 'user-agent': UA, accept: 'application/atom+xml' },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (res.status === 429 || res.status === 503 || res.status === 502) {
+        lastErr = new Error(`HTTP ${res.status}`);
+        continue;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
+      return await res.text();
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr ?? new Error('请求失败');
+}
+
 /** 每个采集项独立失败，不影响整体 */
 async function guard(name, failures, fn) {
   try {
@@ -184,50 +212,173 @@ function parseArxiv(xml) {
         summary: clean(pick(/<summary>([\s\S]*?)<\/summary>/)),
         published: pick(/<published>([^<]+)<\/published>/),
         updated: pick(/<updated>([^<]+)<\/updated>/),
+        primary: pick(/<arxiv:primary_category[^>]*term="([^"]+)"/),
         authors: [...e.matchAll(/<name>([^<]+)<\/name>/g)].map((m) => clean(m[1])).slice(0, 4),
         categories: [...new Set([...e.matchAll(/term="([^"]+)"/g)].map((m) => m[1]))],
       };
     });
 }
 
-export async function collectPapers(cfg, failures) {
-  const hours = Number(cfg.papers?.hours ?? 24);
-  const since = Date.now() - hours * 3600_000;
-  const topics = [];
-  for (const topic of cfg.papers?.arxiv ?? []) {
-    const items = await guard(`arxiv:${topic.label}`, failures, async () => {
-      const q = encodeURIComponent(topic.query);
-      const url = `https://export.arxiv.org/api/query?search_query=${q}&sortBy=submittedDate&sortOrder=descending&max_results=40`;
-      const xml = await getText(url);
-      return parseArxiv(xml)
-        .filter((p) => new Date(p.updated ?? p.published).getTime() >= since)
-        .slice(0, Number(cfg.papers.maxPerTopic ?? 6));
-    });
-    topics.push({ label: topic.label, items: items ?? [] });
-  }
-
-  let hf = [];
-  const hfCfg = cfg.papers?.hfDailyPapers;
-  if (hfCfg?.enabled !== false) {
-    hf = (await guard('hfDailyPapers', failures, async () => {
-      const j = await getJSON(`${hfCfg?.base ?? 'https://hf-mirror.com'}/api/daily_papers`);
-      return j
-        .map((it) => ({
-          id: it.paper?.id,
-          title: it.paper?.title ?? it.title,
-          upvotes: it.paper?.upvotes ?? 0,
-          publishedAt: it.publishedAt ?? it.paper?.publishedAt,
-          summary: String(it.paper?.summary ?? '').replace(/\s+/g, ' ').trim(),
-          url: it.paper?.id ? `https://arxiv.org/abs/${it.paper.id}` : undefined,
-        }))
-        .sort((a, b) => (b.upvotes ?? 0) - (a.upvotes ?? 0))
-        .slice(0, Number(hfCfg?.top ?? 8));
-    })) ?? [];
-  }
-
-  return { hours, topics, hf };
+/** arXiv id / URL → 纯 id（去掉版本号），便于跨数据源对齐 */
+function arxivId(s) {
+  return String(s ?? '').match(/(\d{4}\.\d{4,5})(v\d+)?/)?.[1] ?? null;
 }
 
+const isoDay = (d) => new Date(d).toISOString().slice(0, 10);
+
+/** 从 HF daily_papers 取近 N 天的社区点赞数，得到「社区热度」 */
+async function collectHfDaily(cfg, failures) {
+  const hfCfg = cfg.papers?.hfDailyPapers;
+  if (hfCfg?.enabled === false) return { items: [], upvotes: new Map(), days: 0 };
+  const base = hfCfg?.base ?? 'https://hf-mirror.com';
+  const days = Number(hfCfg?.days ?? 7);
+  const raw = [];
+  let okDays = 0;
+  const errors = [];
+  for (let i = 0; i < days; i += 1) {
+    const day = isoDay(Date.now() - i * 86400_000);
+    try {
+      const j = await getJSON(`${base}/api/daily_papers?date=${day}`, { timeoutMs: 20000 });
+      if (Array.isArray(j)) {
+        okDays += 1;
+        for (const it of j) raw.push({ ...it, day });
+      }
+    } catch (err) {
+      errors.push(`${day}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (i + 1 < days) await sleep(150);
+  }
+  if (okDays === 0 && errors.length) failures.push(`hfDailyPapers: ${errors[0]}`);
+
+  const byId = new Map();
+  const items = [];
+  for (const it of raw) {
+    const id = arxivId(it.paper?.id ?? it.id);
+    const upvotes = it.paper?.upvotes ?? 0;
+    const rec = {
+      id,
+      title: it.paper?.title ?? it.title,
+      upvotes,
+      publishedAt: it.publishedAt ?? it.paper?.publishedAt,
+      summary: String(it.paper?.summary ?? '').replace(/\s+/g, ' ').trim(),
+      url: id ? `https://arxiv.org/abs/${id}` : undefined,
+    };
+    items.push(rec);
+    if (!id) continue;
+    const prev = byId.get(id);
+    if (!prev || (prev.upvotes ?? 0) < upvotes) byId.set(id, rec);
+  }
+  const top = Number(hfCfg?.top ?? 8);
+  return { items: items.sort((a, b) => (b.upvotes ?? 0) - (a.upvotes ?? 0)).slice(0, top), upvotes: byId, days };
+}
+
+/** 用 OpenAlex 按 DOI 批量查被引数（免费、无需 key），作为「学术热度」 */
+async function collectCitations(cfg, ids, failures) {
+  const out = new Map();
+  const opts = cfg.papers?.heat?.openalex;
+  if (opts?.enabled === false || !ids.length) return out;
+  const mailto = opts?.mailto ?? cfg.contactEmail ?? 'noreply@example.com';
+  const chunk = 40;
+  try {
+    for (let i = 0; i < ids.length; i += chunk) {
+      const group = ids.slice(i, i + chunk);
+      // 注意：OpenAlex 的 filter 不能整体 URL 编码（%2F/%3A 会被判 400）；OR 的写法是
+      // `doi:A|B|C`（只有第一个值带键名，每个都带会 400）。
+      const filter = `doi:${group.map((id) => `10.48550/arxiv.${id}`).join('|')}`;
+      const url =
+        `https://api.openalex.org/works?filter=${filter}` +
+        `&per-page=${group.length}&select=doi,cited_by_count&mailto=${encodeURIComponent(mailto)}`;
+      const j = await getJSON(url, { timeoutMs: 20000 });
+      for (const w of j.results ?? []) {
+        const id = arxivId(w.doi);
+        if (id) out.set(id, w.cited_by_count ?? 0);
+      }
+      if (i + chunk < ids.length) await sleep(300);
+    }
+  } catch (err) {
+    failures.push(`openalex: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return out;
+}
+
+export async function collectPapers(cfg, failures) {
+  const pCfg = cfg.papers ?? {};
+  const latestHours = Number(pCfg.latestHours ?? pCfg.hours ?? 24);
+  const hotDays = Number(pCfg.hotDays ?? 7);
+  const maxResults = Number(pCfg.maxResults ?? 300);
+  const latestPerTopic = Number(pCfg.latestPerTopic ?? pCfg.maxPerTopic ?? 6);
+  const hotPerTopic = Number(pCfg.hotPerTopic ?? 6);
+  const hotMinScore = Number(pCfg.hotMinScore ?? 1);
+  const upWeight = Number(pCfg.heat?.upvoteWeight ?? 5);
+
+  // 1) HF 社区热度（同时给「HF 热榜」板块用）
+  const hfDaily = await collectHfDaily(cfg, failures);
+
+  // 2) arXiv：一次查「最热窗口」的提交，再在本地切出「最新 24h」和「最热」
+  const pad = 86400_000; // 服务端时间按 arXiv 自己的时区，留一天缓冲，本地再精确过滤
+  const from = new Date(Date.now() - hotDays * 86400_000 - pad);
+  const stamp = (d) =>
+    `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}0000`;
+  const range = `${stamp(from)}+TO+${stamp(new Date())}`;
+
+  const rawTopics = [];
+  const allIds = new Set();
+  for (const topic of pCfg.arxiv ?? []) {
+    const items = await guard(`arxiv:${topic.label}`, failures, async () => {
+      const url =
+        `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(topic.query)}` +
+        `+AND+submittedDate:%5B${range}%5D` +
+        `&sortBy=submittedDate&sortOrder=descending&max_results=${maxResults}`;
+      return parseArxiv(await getTextRetry(url, { attempts: Number(pCfg.retries ?? 3) }));
+    });
+    const parsed = (items ?? []).map((p) => {
+      const id = arxivId(p.id);
+      if (id) allIds.add(id);
+      const submittedAt = p.published ?? p.updated;
+      return { ...p, id: id ?? p.id, arxivId: id, submittedAt, updatedAt: p.updated ?? p.published };
+    });
+    rawTopics.push({ label: topic.label, query: topic.query, items: parsed });
+    await sleep(Number(pCfg.topicGapMs ?? 3200)); // 别把 arXiv 打限流
+  }
+
+  // 3) 被引数（学术热度）
+  const citations = await collectCitations(cfg, [...allIds], failures);
+
+  // 4) 汇总成 latest / hot 两个榜单
+  const now = Date.now();
+  const sinceLatest = now - latestHours * 3600_000;
+  const sinceHot = now - hotDays * 86400_000;
+  const topics = rawTopics.map((t) => {
+    const enriched = t.items.map((p) => {
+      const upvotes = hfDaily.upvotes.get(p.arxivId)?.upvotes ?? 0;
+      const cited = citations.get(p.arxivId) ?? 0;
+      return { ...p, heat: { upvotes, citations: cited, score: upvotes * upWeight + cited } };
+    });
+    const latest = enriched
+      .filter((p) => new Date(p.submittedAt ?? 0).getTime() >= sinceLatest)
+      .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt))
+      .slice(0, latestPerTopic);
+    const ranked = enriched
+      .filter((p) => new Date(p.submittedAt ?? 0).getTime() >= sinceHot)
+      .sort(
+        (a, b) =>
+          b.heat.score - a.heat.score ||
+          new Date(b.submittedAt) - new Date(a.submittedAt),
+      );
+    const hot = ranked.filter((p) => p.heat.score >= hotMinScore).slice(0, hotPerTopic);
+    return { label: t.label, query: t.query, total: enriched.length, items: latest, hot };
+  });
+
+  return {
+    hours: latestHours,
+    latestHours,
+    hotDays,
+    heatLegend: `热度 = HF 每日论文点赞 ×${upWeight} + OpenAlex 被引次数`,
+    topics,
+    hf: hfDaily.items,
+    hfDays: hfDaily.days,
+  };
+}
 // ---------------------------------------------------------------- Infra 动态
 
 export async function collectInfra(cfg, failures) {

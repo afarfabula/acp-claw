@@ -13,8 +13,21 @@
     "label": "DeepSeek（共享 key）"
   },
   "papers": {
-    "hours": 24,
-    "maxPerTopic": 6,
+    "latestHours": 24,
+    "hotDays": 7,
+    "maxResults": 300,
+    "latestPerTopic": 6,
+    "hotPerTopic": 6,
+    "hotMinScore": 1,
+    "retries": 3,
+    "topicGapMs": 3200,
+    "heat": {
+      "upvoteWeight": 5,
+      "openalex": {
+        "enabled": true,
+        "mailto": "you@example.com"
+      }
+    },
     "arxiv": [
       {
         "label": "视觉/视频 Token 压缩",
@@ -32,7 +45,8 @@
     "hfDailyPapers": {
       "enabled": true,
       "base": "https://hf-mirror.com",
-      "top": 8
+      "top": 8,
+      "days": 7
     }
   },
   "school": {
