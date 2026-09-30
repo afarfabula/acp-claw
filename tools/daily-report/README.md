@@ -92,13 +92,19 @@ paperdoc --spec …        → validateSpec 校验 → renderWeeklyDoc 渲染 �
 - **校验是硬的**：`validateSpec` 要求每篇必须有 arXiv `/abs/` 链接 + 动机 + 方案 + 效果 + 关键结论 +
   至少 1 个「图表图注 + 解读」，缺任何一项直接报错退出（`--check` 可以只校验不发布）。
 - **格式是代码写的**：栏目名、层级、顺序都在 `renderWeeklyDoc` 里，模型只提供内容，不排版。
-- **图表真的能带图**：`paperdoc` 走飞书的「上传素材(`ccm_import_open`) → 建导入任务 → 轮询结果」，
-  Markdown 里的 `![](arxiv 图片地址)` 会被导入成飞书图片块（实测 12 张图全部保留）；表格也会变成原生表格。
-  - 带十几张图的文档导入需要 20–60s，轮询窗口要留够（默认 45×2s）。
-  - `--enrich <materials.json>` 用 `paper` 抓到的素材补齐作者/PDF/HTML/图片地址，避免手抄。
-
-> 经验：docx 的「创建块」接口**不接受** image 块（`block_type: 27` + `image.token` 返回 `1770001`），
-> 所以图片只能靠 Markdown 导入这条路带进去。
+- **图表怎么进去（踩坑记录，很重要）**：`paperdoc --publish` 不是直接把 Markdown 传给飞书，而是
+  **先用 `docx.mjs` 自己生成 .docx，再把 docx 导入**。原因：
+  - 飞书的 **Markdown 导入不下载外链图片**，只在图片位置插一张占位图（实测 12 张全是同一张 22.7KB PNG）；
+  - 占位图把图片块的显示框钉死成 `1460x220`（6.64:1），用 `replace_image` 换成真图后**会被压扁**
+    （原图 2.38:1 → 显示 6.64:1）；而 docx `patch` 接口不允许改 `width/height`
+    （试过 `image:{width,height}`、`update_image` 都返回 `1770001`），`replace_image` 也不更新尺寸；
+  - 另外 docx 的「创建块」接口**不接受** image 块（`block_type: 27` + `image.token` → `1770001`），所以没法自己插图片块；
+  - **导入 .docx 则完全正常**：图片按原始比例（实测 12/12 比例吻合）、表格变原生表格、链接可点。
+  - `replace_image` 上传素材时 `parent_node` 必须填**图片块 id**（填文档 id 报 `1770013 relation mismatch`）——
+    这条只用于修旧文档（`--bind-only`）。
+- `.docx` 是 `docx.mjs` 手工拼 OOXML + 自己写的 ZIP（`zlib.deflateRaw` + CRC32），**没有新增依赖**。
+- 导入（md/docx）耗时 20–60s，轮询窗口要留够（默认 45×2s）；十几张图的文档约 4.5MB。
+- `--enrich <materials.json>` 用 `paper` 抓到的素材补齐作者/PDF/HTML/图片地址，避免手抄。
 - `infra.releases[]`：关注的 GitHub 仓库；`infra.trending`：近期高星新项目
 - `news.feeds[]`：新闻源（`label`/`url`/`limit`，可选 `keywords`、`windowHours`）；`news.hackerNews`：HN Algolia 关键词、`minPoints`、时间窗
 - `projects.local[]`：本地仓库（`name` + `path`）；`projects.github.user`：账号级 push 事件

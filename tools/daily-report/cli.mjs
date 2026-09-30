@@ -53,7 +53,15 @@ import {
   resolveDocId,
   setSolved,
 } from './comments.mjs';
-import { publishMarkdownDoc, renderWeeklyDoc, shareDoc, validateSpec } from './paperdoc.mjs';
+import {
+  bindImages,
+  imageUrlsInMarkdown,
+  publishDocxDoc,
+  publishMarkdownDoc,
+  renderWeeklyDoc,
+  shareDoc,
+  validateSpec,
+} from './paperdoc.mjs';
 import { fetchPaper, renderPaperMaterial } from './paper.mjs';
 import {
   appendDoc,
@@ -299,9 +307,20 @@ async function cmdPaperDoc(flags) {
   process.stdout.write(`✅ 格式校验通过（${spec.papers.length} 篇），Markdown 已写入 ${outPath}（${md.length} 字符）\n`);
   if (flags.check) return;
 
+  if (flags['bind-only']) {
+    // 修图：把一个已存在的文档里的占位图换成真图（飞书 Markdown 导入不下载外链图片）
+    const docId = resolveDocId(flags['bind-only']) ?? flags['bind-only'];
+    const urls = imageUrlsInMarkdown(md);
+    process.stdout.write(`开始绑定 ${urls.length} 张图到文档 ${docId} …\n`);
+    const r = await bindImages(docId, urls, { onLog: (s) => process.stdout.write(`${s}\n`) });
+    process.stdout.write(`完成：绑定 ${r.bound}/${r.urls} 张${r.failed.length ? `，问题：${r.failed.join(' | ')}` : ''}\n`);
+    return;
+  }
+
   if (flags.publish) {
     const name = flags.name ?? `Paper Reading ${spec.week}`;
-    const doc = await publishMarkdownDoc(md, name);
+    // 先渲染成 .docx 再导入：飞书的 Markdown 导入不下载外链图片，只插占位图且会压扁
+    const doc = await publishDocxDoc(md, name, { onLog: (s) => process.stdout.write(`${s}\n`) });
     process.stdout.write(`✅ 已导入飞书文档：${doc.url}\n   document_id: ${doc.token}\n`);
     if (flags.share) {
       await shareDoc(doc.token, flags.share);

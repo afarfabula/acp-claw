@@ -131,8 +131,9 @@ prompt 模板（保持简短，细节交给 skill 与脚本）：
   `url`（必须是 `https://arxiv.org/abs/<id>`，能点进去）/ `motivation` 动机 / `method` 方案 /
   `results` 效果 / `conclusion` 关键结论 / `figures`（至少 1 条，每条要有 `caption` 图注原文 + `explain` 解读）
 - 栏目顺序、标题层级、速览表都由 `renderWeeklyDoc` 生成，**不要**自己拼 Markdown
-- 图表：`--enrich` 会把 `paper` 素材里的图片地址补进 spec，`paperdoc --publish` 通过飞书 Markdown 导入，
-  图片会变成飞书图片块（docx「创建块」接口建不了图片块，只能走导入）
+- 图表：`--enrich` 把 `paper` 素材里的图片地址补进 spec；`paperdoc --publish` 会**先自己生成 .docx
+  （图片按原始比例嵌入）再导入飞书**——不要改成直接传 Markdown，飞书的 Markdown 导入不下载外链图，
+  只插占位图且会把图压扁（详见 tools/daily-report/README.md 的踩坑记录）
 - `--publish` 用**用户身份**导入 → 新文档直接在你自己的云空间，不需要再共享
 - 发布完记得把 `config.paperReading.docId` 改成新文档 id（否则批注还会去读旧的）
 - 写「效果」时只能用素材里能查到的数字，**不要编造指标**

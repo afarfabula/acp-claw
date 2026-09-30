@@ -5,6 +5,7 @@
 //   2) renderWeeklyDoc：按固定骨架渲染 Markdown（栏目顺序、层级都写死在代码里）
 //   3) publishMarkdownDoc：把 Markdown 导入成飞书文档（表格、图片都会保留）
 import { tenantToken, userToken } from '../feishu-doc/auth.mjs';
+import { buildDocx, downloadImages } from './docx.mjs';
 
 const API = 'https://open.feishu.cn/open-apis';
 
@@ -69,9 +70,18 @@ export function renderWeeklyDoc(spec) {
   out.push('');
   out.push('| # | 论文 | 方向 | 热度 | 完成单位 | 状态 |');
   out.push('| --- | --- | --- | --- | --- | --- |');
+  // 速览表的「论文」列用短标题，否则列被撑得又高又窄
+  const shortTitle = (p) => {
+    if (p.short) return p.short;
+    const t = String(p.title ?? '');
+    if (t.length <= 46) return t;
+    const cut = t.slice(0, 46);
+    const sp = cut.lastIndexOf(' ');
+    return `${(sp > 20 ? cut.slice(0, sp) : cut).trim()}…`;
+  };
   spec.papers.forEach((p, i) => {
     out.push(
-      `| ${i + 1} | [${p.title}](${p.url}) | ${p.tag ?? '—'} | ${p.heat ?? '—'} | ${p.org ?? '未取到'} | ${p.status ?? '待读'} |`,
+      `| ${i + 1} | [${shortTitle(p)}](${p.url}) | ${p.tag ?? '—'} | ${p.heat ?? '—'} | ${p.org ?? '未取到'} | ${p.status ?? '待读'} |`,
     );
   });
   out.push('');
@@ -164,21 +174,143 @@ async function getToken(prefer = 'user') {
   return userToken();
 }
 
+/** 取出 Markdown 里图片的地址（按出现顺序）——与导入后文档里图片块的顺序一致 */
+export function imageUrlsInMarkdown(markdown) {
+  return [...String(markdown ?? '').matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)]
+    .map((m) => m[1])
+    .filter((u) => /^https?:\/\//.test(u));
+}
+
+async function req(tk, path, { method = 'GET', body, headers = {} } = {}) {
+  const res = await fetch(`${API}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${tk}`, ...headers },
+    body,
+  });
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`${method} ${path} → HTTP ${res.status} ${text.slice(0, 120)}`);
+  }
+}
+
+/** 按文档顺序取出所有图片块的 id */
+export async function listImageBlocks(tk, docToken) {
+  const items = [];
+  let pageToken;
+  for (let i = 0; i < 20; i += 1) {
+    const q = new URLSearchParams({ page_size: '500', document_revision_id: '-1' });
+    if (pageToken) q.set('page_token', pageToken);
+    const j = await req(tk, `/docx/v1/documents/${docToken}/blocks?${q}`);
+    if (j.code !== 0) throw new Error(`读块失败: ${j.code} ${j.msg}`);
+    items.push(...(j.data?.items ?? []));
+    if (!j.data?.has_more) break;
+    pageToken = j.data.page_token;
+  }
+  // 按块在文档里的相对顺序排一下（根块下的 children 顺序才是阅读顺序）
+  const byId = new Map(items.map((b) => [b.block_id, b]));
+  const page = items.find((b) => b.block_type === 1) ?? items[0];
+  const order = [];
+  const walk = (id) => {
+    const b = byId.get(id);
+    if (!b) return;
+    order.push(b);
+    for (const c of b.children ?? []) walk(c);
+  };
+  for (const c of page?.children ?? []) walk(c);
+  const seen = new Set(order.map((b) => b.block_id));
+  for (const b of items) if (!seen.has(b.block_id)) order.push(b);
+  return order.filter((b) => b.block_type === 27);
+}
+
 /**
- * 把 Markdown 导入成飞书文档（表格 / 图片都会保留）。
- * 走的是飞书官方的「上传素材(ccm_import_open) → 建导入任务 → 轮询结果」流程。
+ * 把真图绑到文档里的图片块上。
+ *
+ * 飞书 Markdown 导入**不会下载外链图片**，只会插一张占位图（实测 12 张全是同一张 22.7KB PNG）。
+ * 正确做法：先把图上传成 `docx_image` 素材（**parent_node 必须是图片块的 block_id**，
+ * 填文档 id 会报 `1770013 relation mismatch`），再用 `replace_image` 把占位图换掉。
  */
-// 带图的 Markdown（十几张图）导入耗时较长，实测 20–60s，轮询窗口要留够
+export async function bindImages(docToken, urls, { token, onLog = () => {} } = {}) {
+  const tk = token ?? (await getToken('user'));
+  const blocks = await listImageBlocks(tk, docToken);
+  const result = { slots: blocks.length, urls: urls.length, bound: 0, failed: [] };
+  const n = Math.min(blocks.length, urls.length);
+  if (blocks.length !== urls.length) {
+    result.failed.push(`图片块数(${blocks.length})与 Markdown 图片数(${urls.length})不一致，按前 ${n} 张对齐`);
+  }
+  for (let i = 0; i < n; i += 1) {
+    const url = urls[i];
+    const blockId = blocks[i].block_id;
+    try {
+      const res = await fetch(url, { headers: { 'user-agent': 'acp-claw-daily-report/1.0' } });
+      if (!res.ok) throw new Error(`下载图片失败 HTTP ${res.status}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      const form = new FormData();
+      const ext = (url.match(/\.(png|jpe?g|gif|webp)(\?|$)/i)?.[1] ?? 'png').toLowerCase();
+      form.append('file_name', `fig-${i + 1}.${ext}`);
+      form.append('parent_type', 'docx_image');
+      form.append('parent_node', blockId); // ← 关键：图片块 id
+      form.append('size', String(buf.length));
+      form.append('extra', JSON.stringify({ drive_route_token: docToken }));
+      form.append('file', new Blob([buf]), `fig-${i + 1}.${ext}`);
+      const up = await req(tk, '/drive/v1/medias/upload_all', { method: 'POST', body: form });
+      if (up.code !== 0 || !up.data?.file_token) throw new Error(`上传失败 ${up.code} ${up.msg}`);
+      const patch = await req(tk, `/docx/v1/documents/${docToken}/blocks/${blockId}?document_revision_id=-1`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({ replace_image: { token: up.data.file_token } }),
+      });
+      if (patch.code !== 0) throw new Error(`replace_image ${patch.code} ${patch.msg}`);
+      result.bound += 1;
+      onLog(`  [${i + 1}/${n}] ${url.split('/').pop()} → ${Math.round(buf.length / 1024)}KB ✓`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      result.failed.push(`第 ${i + 1} 张（${url}）: ${msg}`);
+      onLog(`  [${i + 1}/${n}] 失败: ${msg}`);
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return result;
+}
+
+/**
+ * 把 Markdown 导入成飞书文档（纯文字场景）。
+ *
+ * ⚠️ 带图的文档**不要**走这条（`file_extension: 'md'`）：飞书不会下载外链图片，只插一张占位图，
+ * 且图片块的显示框被钉死成 1460x220（6.64:1），换成真图后会被压扁。带图请用 `publishDocxDoc`。
+ */
+// 导入耗时较长，实测 20–60s，轮询窗口要留够
 export async function publishMarkdownDoc(markdown, name, { token, pollMs = 2000, maxPolls = 45 } = {}) {
   const tk = token ?? (await getToken('user'));
+  return importFile(tk, Buffer.from(markdown, 'utf-8'), `${name}.md`, 'md', name, { pollMs, maxPolls });
+}
+
+/**
+ * 把 Markdown 先渲染成 .docx 再导入飞书（**带图的正确做法**）。
+ * 图片按原始比例嵌入，表格变原生表格，链接可点。
+ */
+export async function publishDocxDoc(markdown, name, { token, pollMs = 2000, maxPolls = 45, onLog = () => {} } = {}) {
+  const tk = token ?? (await getToken('user'));
+  // 导入 docx 时文档标题取自文件名，正文里再放一个 H1 会重复，所以去掉首个 H1
+  const body = String(markdown).replace(/^#\s+.*\n+/, '');
+  onLog('下载图片（按原始尺寸嵌入 docx）…');
+  const images = await downloadImages(body, { onLog });
+  const buf = buildDocx(body, images);
+  onLog(`生成 docx：${Math.round(buf.length / 1024)}KB（含 ${images.size} 张图）`);
+  return importFile(tk, buf, `${name}.docx`, 'docx', name, { pollMs, maxPolls });
+}
+
+/** 上传素材 → 建导入任务 → 轮询结果（md / docx / html 共用） */
+async function importFile(tk, buffer, fileName, ext, name, { pollMs, maxPolls }) {
 
   const form = new FormData();
-  form.append('file_name', `${name}.md`);
+  form.append('file_name', fileName);
   form.append('parent_type', 'ccm_import_open');
   form.append('parent_node', '/');
-  form.append('size', String(Buffer.byteLength(markdown)));
-  form.append('extra', JSON.stringify({ obj_type: 'docx', file_extension: 'md' }));
-  form.append('file', new Blob([markdown], { type: 'text/markdown' }), `${name}.md`);
+  form.append('size', String(buffer.length));
+  form.append('extra', JSON.stringify({ obj_type: 'docx', file_extension: ext }));
+  form.append('file', new Blob([buffer]), fileName);
   const up = await (
     await fetch(`${API}/drive/v1/medias/upload_all`, {
       method: 'POST',
@@ -186,14 +318,14 @@ export async function publishMarkdownDoc(markdown, name, { token, pollMs = 2000,
       body: form,
     })
   ).json();
-  if (up.code !== 0 || !up.data?.file_token) throw new Error(`上传 Markdown 失败: ${up.msg}`);
+  if (up.code !== 0 || !up.data?.file_token) throw new Error(`上传素材失败: ${up.msg}`);
 
   const task = await (
     await fetch(`${API}/drive/v1/import_tasks`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json; charset=utf-8' },
       body: JSON.stringify({
-        file_extension: 'md',
+        file_extension: ext,
         file_name: name,
         file_token: up.data.file_token,
         type: 'docx',
