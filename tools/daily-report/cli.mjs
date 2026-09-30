@@ -53,6 +53,8 @@ import {
   resolveDocId,
   setSolved,
 } from './comments.mjs';
+import { publishMarkdownDoc, renderWeeklyDoc, shareDoc, validateSpec } from './paperdoc.mjs';
+import { fetchPaper, renderPaperMaterial } from './paper.mjs';
 import {
   appendDoc,
   deleteDocRange,
@@ -233,6 +235,79 @@ function readDocEntries(flags) {
     inferMissingDates(entries);
   }
   return { cfg, parts, state, md, docRef, header, entries, fixes };
+}
+
+/** 抓一篇/多篇论文的写文档素材：node cli.mjs paper <id> [...] [--json] */
+async function cmdPaper(flags, positional) {
+  if (!positional.length) throw new Error('用法: paper <arxiv-id|url> [更多 id …] [--json] [--figures N]');
+  const records = [];
+  for (const [i, id] of positional.entries()) {
+    records.push(await fetchPaper(id, { figures: Number(flags.figures ?? 5), snippetChars: Number(flags.snippet ?? 520) }));
+    if (i + 1 < positional.length) await new Promise((r) => setTimeout(r, Number(flags.gap ?? 1200)));
+  }
+  if (flags.json) {
+    process.stdout.write(`${JSON.stringify(records, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`${records.map(renderPaperMaterial).join('\n\n---\n\n')}\n`);
+}
+
+/** 用 paper 素材补齐 spec 里可以自动拿到的字段（作者/PDF/HTML/图表图片地址）
+ *  —— 格式由 spec 决定，元数据由这份素材补，避免手抄出错 */
+export function enrichSpec(spec, materials) {
+  const byId = new Map(
+    (Array.isArray(materials) ? materials : Object.values(materials ?? {})).map((m) => [m.id, m]),
+  );
+  const norm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  for (const p of spec.papers ?? []) {
+    const m = byId.get(p.id);
+    if (!m) continue;
+    p.authors ??= m.authors;
+    p.pdf ??= m.pdf;
+    p.html ??= m.html;
+    p.org ||= m.affiliations?.join(' / ');
+    for (const f of p.figures ?? []) {
+      const hit = (m.figures ?? []).find((x) => norm(x.label) === norm(f.label));
+      if (hit?.imageUrl) f.imageUrl = hit.imageUrl;
+    }
+  }
+  return spec;
+}
+
+/**
+ * 每周 Paper Reading 文档：格式校验 + 渲染 + 发布（Markdown 导入成飞书文档）
+ *   node cli.mjs paperdoc --spec <json> [--out <md>] [--check] [--publish] [--name <标题>] [--share <open_id>]
+ */
+async function cmdPaperDoc(flags) {
+  if (!flags.spec) throw new Error('用法: paperdoc --spec <spec.json> [--out <md>] [--check] [--publish --name <标题>]');
+  const spec = JSON.parse(readFileSync(expandHome(flags.spec), 'utf-8'));
+  if (flags.enrich) {
+    const materials = JSON.parse(readFileSync(expandHome(flags.enrich), 'utf-8'));
+    enrichSpec(spec, materials);
+    process.stdout.write(`已用 ${flags.enrich} 补齐作者/PDF/HTML/图表图片地址\n`);
+  }
+
+  const problems = validateSpec(spec);
+  if (problems.length) {
+    process.stderr.write(`❌ 格式不完整（${problems.length} 处）：\n- ${problems.join('\n- ')}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const md = renderWeeklyDoc(spec);
+  const outPath = flags.out ? expandHome(flags.out) : join(resolveDataDir(loadConfig().config), `paper-reading-${spec.week}.md`);
+  writeFileSync(outPath, md, 'utf-8');
+  process.stdout.write(`✅ 格式校验通过（${spec.papers.length} 篇），Markdown 已写入 ${outPath}（${md.length} 字符）\n`);
+  if (flags.check) return;
+
+  if (flags.publish) {
+    const name = flags.name ?? `Paper Reading ${spec.week}`;
+    const doc = await publishMarkdownDoc(md, name);
+    process.stdout.write(`✅ 已导入飞书文档：${doc.url}\n   document_id: ${doc.token}\n`);
+    if (flags.share) {
+      await shareDoc(doc.token, flags.share);
+      process.stdout.write(`✅ 已共享给 ${flags.share}（full_access）\n`);
+    }
+  }
 }
 
 /** 读 `--text`：支持直接给字符串，也支持 @文件路径 */
@@ -502,6 +577,8 @@ const COMMANDS = {
   affil: cmdAffil,
   comments: cmdComments,
   reply: cmdReply,
+  paper: cmdPaper,
+  paperdoc: cmdPaperDoc,
   publish: cmdPublish,
   'doc-tree': cmdDocTree,
   fixdoc: cmdFixDoc,

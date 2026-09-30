@@ -45,6 +45,10 @@ node $CLI affil 2606.05688 2609.35457 # 查论文的完成单位（机构/团队
 node $CLI comments                   # 列 Paper Reading 文档的批注，标出「还没处理过」的（增量，记在 state.json）
 node $CLI comments --doc <url>        # 指定文档；--rebuild 重建基线（把现有批注全当已读）；--all 列全部
 node $CLI reply <doc> <commentId> --text "回答"   # 在批注里回复（默认同时标记「已解决」，并记进度不再重复处理）
+node $CLI paper 2606.05688           # 抓一篇论文的写文档素材（摘要/章节要点/图表图注与图片地址/完成单位）
+node $CLI paperdoc --spec <spec.json> --enrich <materials.json>   # 校验格式 + 渲染每周 Paper Reading 文档
+node $CLI paperdoc --spec <spec.json> --enrich <materials.json> --publish --name "Paper Reading 2026-W41"
+                                     # 导入成飞书文档（表格/图片都会保留），输出 document_id
 node $CLI doc-tree --file <md>        # 同上，但读本地 Markdown（离线排查用）
 node $CLI fixdoc --dry                # 预览「重排 + 规范化」结果（备份原稿并落盘规范化稿）
 node $CLI fixdoc                      # 重排/规范化当月文档（先备份，再整体重写）
@@ -68,11 +72,33 @@ node $CLI config                      # 查看运行时配置
   数据来自 arXiv HTML 版作者块；2023-12 以前、或作者块被转换弄坏的论文可能取不到（此时用 `affil` 命令单独试）
 - `paperReading`：每周 Paper reading 文档的批注处理
   - `docId`：当前这周的文档（换周时改这里）；`enabled`、`markSolved`（回复后是否自动标记「已解决」，默认 true）
+  - `specDir`：每周文档的「内容规格」放这里（`paper-reading/<week>.json`），格式由代码校验
   - 进度记在 `state.json` 的 `paperReading.docs.<docId>.seenReplies`：只处理**没见过的回复**，
     首次检查只会「建立基线」，不会把历史批注重做一遍
   - 注意：飞书返回的回复里，机器人自己发的回复也带用户的 `user_id`（实测），所以**不能靠作者判断**，
     一律以本地记录的 `reply_id` 为准；另外「用 API 新建的全文评论」不允许回复（`1069302`），
     用户在文档里划词产生的批注可以正常回复
+
+## 每周 Paper Reading 文档（格式由代码保证）
+
+痛点：文档格式不能靠"模型记得写"，否则每篇内容都会缩水。所以分成三段，格式全部在代码里：
+
+```text
+paper <id>…              → 抓素材：摘要 / 章节要点 / 图表图注 + 图片地址 / 完成单位 / 作者
+spec.json（人/模型写）    → 每篇的 动机 / 方案 / 效果 / 关键结论 / 图表解读 / 对我的用处
+paperdoc --spec …        → validateSpec 校验 → renderWeeklyDoc 渲染 → 导入成飞书文档
+```
+
+- **校验是硬的**：`validateSpec` 要求每篇必须有 arXiv `/abs/` 链接 + 动机 + 方案 + 效果 + 关键结论 +
+  至少 1 个「图表图注 + 解读」，缺任何一项直接报错退出（`--check` 可以只校验不发布）。
+- **格式是代码写的**：栏目名、层级、顺序都在 `renderWeeklyDoc` 里，模型只提供内容，不排版。
+- **图表真的能带图**：`paperdoc` 走飞书的「上传素材(`ccm_import_open`) → 建导入任务 → 轮询结果」，
+  Markdown 里的 `![](arxiv 图片地址)` 会被导入成飞书图片块（实测 12 张图全部保留）；表格也会变成原生表格。
+  - 带十几张图的文档导入需要 20–60s，轮询窗口要留够（默认 45×2s）。
+  - `--enrich <materials.json>` 用 `paper` 抓到的素材补齐作者/PDF/HTML/图片地址，避免手抄。
+
+> 经验：docx 的「创建块」接口**不接受** image 块（`block_type: 27` + `image.token` 返回 `1770001`），
+> 所以图片只能靠 Markdown 导入这条路带进去。
 - `infra.releases[]`：关注的 GitHub 仓库；`infra.trending`：近期高星新项目
 - `news.feeds[]`：新闻源（`label`/`url`/`limit`，可选 `keywords`、`windowHours`）；`news.hackerNews`：HN Algolia 关键词、`minPoints`、时间窗
 - `projects.local[]`：本地仓库（`name` + `path`）；`projects.github.user`：账号级 push 事件

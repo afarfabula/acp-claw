@@ -41,6 +41,9 @@ node $CLI comments                   # 列 Paper Reading 文档的批注，标�
 node $CLI comments --doc <url>       # 指定别的文档；--rebuild 重建基线（把现有批注全当已读）
 node $CLI reply <doc> <commentId> --text "回答"   # 在批注里回复（默认同时标记「已解决」，并记住进度）
 node $CLI affil 2606.05688           # 查论文的完成单位（机构/团队）与作者
+node $CLI paper 2606.05688           # 抓论文写文档素材（摘要/章节/图表图注+图片/完成单位）
+node $CLI paperdoc --spec <json> --enrich <materials.json> [--check] [--publish --name <标题>]
+                                     # 每周 Paper Reading 文档：格式校验 → 渲染 → 导入飞书
 node $CLI publish --file <md>        # 写入当月飞书文档
 node $CLI publish --file <md> --chat <chatId>   # 同时发群（备用通道）
 node $CLI publish --file <md> --title "AI新闻 {yyyy}-{MM}" --open-id <openId>  # 归档到新闻文档 + 推送单聊
@@ -111,6 +114,28 @@ prompt 模板（保持简短，细节交给 skill 与脚本）：
    ```
 
    不要输出中间过程、不要复述工具原始输出。
+
+## 每周 Paper Reading 文档（格式由代码保证，用户 2026-09-30 明确要求）
+
+**格式不能靠模型"记得写"**，必须走代码。三段式：
+
+```text
+1) node $CLI paper <id> …          # 抓素材 → 落盘 materials.json（摘要/章节要点/图表图注+图片地址/完成单位/作者）
+2) 写 spec.json                    # 每篇补齐：动机 / 方案 / 效果 / 关键结论 / 图表解读 / 对我的用处
+3) node $CLI paperdoc --spec <spec.json> --enrich <materials.json> --check
+   node $CLI paperdoc --spec <spec.json> --enrich <materials.json> --publish --name "Paper Reading <week>"
+```
+
+- spec 放 `~/.acp-claw/daily-report/paper-reading/<week>.json`（`config.paperReading.specDir`）
+- **每篇必须有的字段**（缺任一 `paperdoc` 会直接报错退出，这是硬约束）：
+  `url`（必须是 `https://arxiv.org/abs/<id>`，能点进去）/ `motivation` 动机 / `method` 方案 /
+  `results` 效果 / `conclusion` 关键结论 / `figures`（至少 1 条，每条要有 `caption` 图注原文 + `explain` 解读）
+- 栏目顺序、标题层级、速览表都由 `renderWeeklyDoc` 生成，**不要**自己拼 Markdown
+- 图表：`--enrich` 会把 `paper` 素材里的图片地址补进 spec，`paperdoc --publish` 通过飞书 Markdown 导入，
+  图片会变成飞书图片块（docx「创建块」接口建不了图片块，只能走导入）
+- `--publish` 用**用户身份**导入 → 新文档直接在你自己的云空间，不需要再共享
+- 发布完记得把 `config.paperReading.docId` 改成新文档 id（否则批注还会去读旧的）
+- 写「效果」时只能用素材里能查到的数字，**不要编造指标**
 
 ## 常见问题
 
