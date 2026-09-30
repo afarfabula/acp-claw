@@ -278,6 +278,14 @@ export function enrichSpec(spec, materials) {
     for (const f of p.figures ?? []) {
       const hit = (m.figures ?? []).find((x) => norm(x.label) === norm(f.label));
       if (hit?.imageUrl) f.imageUrl = hit.imageUrl;
+      const tbl = (m.tables ?? []).find((x) => norm(x.label) === norm(f.label));
+      if (tbl?.rows?.length) {
+        f.rows = tbl.rows;
+        f.rowCount = tbl.rowCount;
+        f.truncated = tbl.truncated;
+        f.caption ||= tbl.caption; // 表注没手写就用原文的
+      }
+      if (!f.caption && hit?.caption) f.caption = hit.caption;
     }
   }
   return spec;

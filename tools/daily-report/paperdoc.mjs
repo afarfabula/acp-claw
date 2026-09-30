@@ -43,6 +43,18 @@ export function validateSpec(spec) {
     for (const [j, f] of figs.entries()) {
       if (!f?.caption) errors.push(`${tag}: 第 ${j + 1} 个图表缺图注原文（caption）`);
       if (!f?.explain) errors.push(`${tag}: 第 ${j + 1} 个图表缺解读（explain）`);
+      // 表格必须有真内容；图片必须有图片地址——只写图注不算（2026-09-30 踩过的坑）
+      const isTable = /^table/i.test(f?.label ?? '');
+      if (isTable) {
+        const rows = f?.rows ?? [];
+        if (rows.length < 2) {
+          errors.push(`${tag}: 「${f.label}」是表格但没抓到内容（rows 至少 2 行，先跑 paper <id> 抓表格）`);
+        } else if (rows.every((r) => r.every((c) => !String(c ?? '').trim()))) {
+          errors.push(`${tag}: 「${f.label}」表格内容全是空的`);
+        }
+      } else if (!f?.imageUrl && !(f?.rows ?? []).length) {
+        errors.push(`${tag}: 「${f?.label ?? `第 ${j + 1} 个`}」是图但既没有图片地址也没有表格内容`);
+      }
     }
   }
   return errors;
@@ -134,6 +146,19 @@ export function renderWeeklyDoc(spec) {
       if (f.imageUrl) {
         out.push(`![${f.label}](${f.imageUrl})`);
         out.push('');
+      }
+      // 表格：把抓到的真实内容渲染成原生表格（只写图注＝空表，用户明确要求必须有内容）
+      if (f.rows?.length) {
+        const cols = Math.max(...f.rows.map((r) => r.length));
+        out.push(`| ${f.rows[0].map((c) => c || ' ').join(' | ')} |`);
+        out.push(`| ${Array.from({ length: cols }, () => '---').join(' | ')} |`);
+        for (const r of f.rows.slice(1)) {
+          const cells = Array.from({ length: cols }, (_, i) => r[i] ?? ' ');
+          out.push(`| ${cells.join(' | ')} |`);
+        }
+        out.push('');
+        if (f.truncated) out.push(`（原表更长，这里截取前 ${f.rows.length} 行）`);
+        if (f.truncated) out.push('');
       }
       out.push(`> 图注原文：${clean(f.caption)}`);
       out.push('>');

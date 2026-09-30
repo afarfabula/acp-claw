@@ -130,6 +130,10 @@ prompt 模板（保持简短，细节交给 skill 与脚本）：
 - **每篇必须有的字段**（缺任一 `paperdoc` 会直接报错退出，这是硬约束）：
   `url`（必须是 `https://arxiv.org/abs/<id>`，能点进去）/ `motivation` 动机 / `method` 方案 /
   `results` 效果 / `conclusion` 关键结论 / `figures`（至少 1 条，每条要有 `caption` 图注原文 + `explain` 解读）
+- **图表必须有真内容**（用户 2026-09-30 两次强调）：
+  - 写 `table N` → 必须能从 `paper` 素材里带出 `rows`（至少 2 行）；空表会被校验拦下
+  - 写 `figure N` → 必须有图片地址（arXiv 是 SVG 的会由代码自动转 PNG；MathML 里的数字会转成文本）
+  - 只写图注、没有表内容＝不合格；`paperdoc` 会在校验阶段直接报错
 - 栏目顺序、标题层级、速览表都由 `renderWeeklyDoc` 生成，**不要**自己拼 Markdown
 - 图表：`--enrich` 把 `paper` 素材里的图片地址补进 spec；`paperdoc --publish` 会**先自己生成 .docx
   （图片按原始比例嵌入）再导入飞书**——不要改成直接传 Markdown，飞书的 Markdown 导入不下载外链图，

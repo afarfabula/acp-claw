@@ -105,6 +105,23 @@ paperdoc --spec …        → validateSpec 校验 → renderWeeklyDoc 渲染 �
 - `.docx` 是 `docx.mjs` 手工拼 OOXML + 自己写的 ZIP（`zlib.deflateRaw` + CRC32），**没有新增依赖**。
 - 导入（md/docx）耗时 20–60s，轮询窗口要留够（默认 45×2s）；十几张图的文档约 4.5MB。
 - `--enrich <materials.json>` 用 `paper` 抓到的素材补齐作者/PDF/HTML/图片地址，避免手抄。
+
+### 「关键图表」必须有真内容（2026-09-30 两道硬约束）
+
+用户两次指出「表格是空的 / 图片不全」，所以现在 spec 校验里写死了规则：
+
+- **表格**（label 以 `table` 开头）：必须有 `rows`，且不能整表为空 → 否则 `paperdoc` 直接报错。
+- **图**（label 以 `figure` 开头）：必须有 `imageUrl`（或退化用表格内容）→ 否则报错。
+- 表格内容来自 `paper.mjs` 的 `parseTables`，它要同时处理 arXiv HTML 的三种写法：
+  1. 标准 `<table>`（LaTeXML 有时把表包在 `<figure class="ltx_table">` 里，且单元格里还嵌嵌套表
+     ——用非贪婪正则会被截断，必须按标签配对取「本层」`tr/td`）；
+  2. `<span class="ltx_tabular">` + `ltx_tr/ltx_td`（整张表根本没有 `<table>`，实测 2609.35002 就是这样）；
+  3. **数字经常放在 MathML 里**——直接从 `<annotation encoding="application/x-tex">` 取 LaTeX 再转成
+     可读文本（否则单元格全是空的，实测 2609.35457 表 1 就是这样）。
+- 图片同理，arXiv 有三种嵌图方式：`<img src>`、`<object data="*.svg">`（很多论文用 SVG！）、
+  以及 `<img src="*.svg">`；抓到 SVG 后用 LibreOffice 转 PNG 再嵌进 docx。
+- 发布后 `verifyImageAspect` 会把每张图**下载回来**，比对「图片块显示比例」与「图片真实比例」，
+  不一致就报错退出——接口字段正常≠渲染正常，这个检查是吃过亏才加的。
 - `infra.releases[]`：关注的 GitHub 仓库；`infra.trending`：近期高星新项目
 - `news.feeds[]`：新闻源（`label`/`url`/`limit`，可选 `keywords`、`windowHours`）；`news.hackerNews`：HN Algolia 关键词、`minPoints`、时间窗
 - `projects.local[]`：本地仓库（`name` + `path`）；`projects.github.user`：账号级 push 事件

@@ -5,6 +5,30 @@
 // 换成真图后会被压扁；`replace_image` 也不会更新尺寸，接口又不允许改 width/height。
 // 导入 docx 则完全正常：图片按原始比例、表格变原生表格。
 import { deflateRawSync } from 'node:zlib';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+/** arXiv 很多图是 SVG（用 <object data="xxx.svg"> 嵌的），docx 里没法直接用，先转成 PNG */
+export function isSvg(buf) {
+  const head = buf.subarray(0, 400).toString('utf-8');
+  return /<svg[\s>]/i.test(head) || /^\s*<\?xml/.test(head);
+}
+
+export function svgToPng(svgBuf, { timeoutMs = 90000 } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'svg2png-'));
+  const inPath = join(dir, 'fig.svg');
+  writeFileSync(inPath, svgBuf);
+  execFileSync(
+    'soffice',
+    ['--headless', `-env:UserInstallation=file://${dir}/lo`, '--convert-to', 'png', '--outdir', dir, inPath],
+    { stdio: 'ignore', timeout: timeoutMs },
+  );
+  const png = readFileSync(join(dir, 'fig.png'));
+  if (!png.length) throw new Error('SVG 转 PNG 失败（输出为空）');
+  return png;
+}
 
 // ------------------------------------------------------------------ ZIP
 const CRC_TABLE = (() => {
@@ -380,10 +404,16 @@ export async function downloadImages(markdown, { onLog = () => {} } = {}) {
     try {
       const res = await fetch(url, { headers: { 'user-agent': 'acp-claw-daily-report/1.0' } });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = Buffer.from(await res.arrayBuffer());
+      let data = Buffer.from(await res.arrayBuffer());
+      let note = '';
+      if (isSvg(data)) {
+        const before = data.length;
+        data = svgToPng(data);
+        note = `（SVG ${Math.round(before / 1024)}KB → PNG）`;
+      }
       const { width, height, ext } = imageSize(data);
       map.set(url, { data, width, height, ext, url });
-      onLog(`  ${url.split('/').pop()} → ${width}x${height} ${Math.round(data.length / 1024)}KB`);
+      onLog(`  ${url.split('/').pop()} → ${width}x${height} ${Math.round(data.length / 1024)}KB${note}`);
     } catch (err) {
       onLog(`  图片下载失败 ${url}: ${err instanceof Error ? err.message : err}`);
     }
