@@ -61,6 +61,7 @@ import {
   renderWeeklyDoc,
   shareDoc,
   validateSpec,
+  verifyImageAspect,
 } from './paperdoc.mjs';
 import { fetchPaper, renderPaperMaterial } from './paper.mjs';
 import {
@@ -322,6 +323,14 @@ async function cmdPaperDoc(flags) {
     // 先渲染成 .docx 再导入：飞书的 Markdown 导入不下载外链图片，只插占位图且会压扁
     const doc = await publishDocxDoc(md, name, { onLog: (s) => process.stdout.write(`${s}\n`) });
     process.stdout.write(`✅ 已导入飞书文档：${doc.url}\n   document_id: ${doc.token}\n`);
+    // 发布后自检：图片块显示比例必须与真实图片一致，否则说明排版坏了
+    const check = await verifyImageAspect(doc.token);
+    if (check.bad.length) {
+      process.stderr.write(`⚠️ 图片自检未通过（${check.bad.length}/${check.total}）：\n- ${check.bad.join('\n- ')}\n`);
+      process.exitCode = 1;
+    } else {
+      process.stdout.write(`✅ 图片自检通过：${check.total} 张图的显示比例都正确\n`);
+    }
     if (flags.share) {
       await shareDoc(doc.token, flags.share);
       process.stdout.write(`✅ 已共享给 ${flags.share}（full_access）\n`);

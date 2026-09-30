@@ -6,6 +6,7 @@
 //   3) publishMarkdownDoc：把 Markdown 导入成飞书文档（表格、图片都会保留）
 import { tenantToken, userToken } from '../feishu-doc/auth.mjs';
 import { buildDocx, downloadImages } from './docx.mjs';
+import { imageSize } from './docx.mjs';
 
 const API = 'https://open.feishu.cn/open-apis';
 
@@ -351,6 +352,38 @@ async function importFile(tk, buffer, fileName, ext, name, { pollMs, maxPolls })
     }
   }
   throw new Error('导入超时（任务一直没完成）');
+}
+
+/**
+ * 发布后自检：把每个图片块**下载回来**，比较「图片块记录的宽高比」与「图片本身真实的宽高比」。
+ *
+ * 这是被坑出来的检查：飞书 Markdown 导入会插占位图并把显示框钉死成 6.64:1，
+ * 换成真图后接口返回的一切正常（token 有值、下载字节也对），但**渲染出来是压扁的**，
+ * 只看接口字段根本发现不了。比例对不上就说明排版坏了。
+ */
+export async function verifyImageAspect(docToken, { token, tolerance = 0.05 } = {}) {
+  const tk = token ?? (await getToken('user'));
+  const blocks = await listImageBlocks(tk, docToken);
+  const bad = [];
+  for (const b of blocks) {
+    try {
+      const res = await fetch(`${API}/drive/v1/medias/${b.image.token}/download`, {
+        headers: { Authorization: `Bearer ${tk}` },
+      });
+      const buf = Buffer.from(await res.arrayBuffer());
+      const { width, height } = imageSize(buf);
+      const boxRatio = b.image.width / b.image.height;
+      const realRatio = width / height;
+      if (Math.abs(boxRatio - realRatio) / realRatio > tolerance) {
+        bad.push(
+          `${b.block_id}: 显示框 ${b.image.width}x${b.image.height}(${boxRatio.toFixed(2)}:1) ≠ 实际 ${width}x${height}(${realRatio.toFixed(2)}:1)`,
+        );
+      }
+    } catch (err) {
+      bad.push(`${b.block_id}: 校验失败 ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  return { total: blocks.length, bad };
 }
 
 /** 把文档分享给某人（默认给用户自己，保证能编辑/批注） */
