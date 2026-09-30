@@ -95,6 +95,7 @@ export function renderBrief(data, { timeZone = 'Asia/Shanghai' } = {}) {
       out.push(
         `- **${trim(p.title, 160)}** ｜ 热度 ${heatText(p)} ｜ ${trim((p.categories ?? []).join(','), 40)} ｜ ${String(p.submittedAt ?? p.published ?? '').slice(0, 10)}`,
       );
+      out.push(`  - 完成单位：${p.affiliation?.institutions?.length ? trim(p.affiliation.institutions.join(' / '), 120) : '未取到（论文太新/没有 HTML 版）'}`);
       out.push(`  - 链接：${arxivUrl(p.url ?? p.id)}`);
       out.push(`  - 摘要：${trim(p.summary, 420)}`);
     }

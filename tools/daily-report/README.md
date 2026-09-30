@@ -17,7 +17,7 @@ cron（每天 08:30，--fresh-session）→ 新会话里的 agent
 | --- | --- | --- |
 | 天气 | Open-Meteo（无需 key） | 指定经纬度的未来 N 小时逐小时预报（默认电子科技大学清水河校区） |
 | API 余额 | `GET https://api.deepseek.com/user/balance` | key 取 `DEEPSEEK_API_KEY` 环境变量，回退到 `~/.bashrc` |
-| 学术论文 | arXiv API + HF Daily Papers（含 `hf-mirror.com` 镜像）+ OpenAlex | 每个主题给**两个榜单**：🆕 最新（近 24h 提交）+ 🔥 最热（近 7 天，按「HF 点赞 + OpenAlex 被引」排序），热度值带单位写入日报 |
+| 学术论文 | arXiv API + HF Daily Papers（含 `hf-mirror.com` 镜像）+ OpenAlex + arXiv HTML | 每个主题给**两个榜单**：🆕 最新（近 24h 提交）+ 🔥 最热（近 7 天，按「HF 点赞 + OpenAlex 被引」排序），热度值带单位；并抓**完成单位**（作者机构，解析 arXiv HTML 的作者块） |
 | Infra 动态 | GitHub API | 关注仓库的新 release、近期高星新项目、账号下的 push 事件 |
 | 项目进展 | 本地 `git log/status` + GitHub 事件 | “用最新 commit 当记忆”，含未提交改动数量 |
 | AI 新闻 | RSS/Atom 多源 + HN Algolia API | 量子位/雷峰网/Google AI/OpenAI/HuggingFace Blog + Hacker News（按热度过滤），去重 + 时间窗 |
@@ -41,6 +41,7 @@ node $CLI publish --file <日报.md>     # 写入飞书文档（按 config.feish
 node $CLI publish --file <日报.md> --chat oc_xxx   # 同时用应用身份发一份到群
 node $CLI publish --file <新闻.md> --title "AI新闻 {yyyy}-{MM}" --open-id ou_xxx  # 归档 + 单聊推送
 node $CLI doc-tree                    # 解析文档里的简报条目（日期/栏目/首行），不改文档
+node $CLI affil 2606.05688 2609.35457 # 查论文的完成单位（机构/团队）与作者
 node $CLI doc-tree --file <md>        # 同上，但读本地 Markdown（离线排查用）
 node $CLI fixdoc --dry                # 预览「重排 + 规范化」结果（备份原稿并落盘规范化稿）
 node $CLI fixdoc                      # 重排/规范化当月文档（先备份，再整体重写）
@@ -60,6 +61,8 @@ node $CLI config                      # 查看运行时配置
 - `papers.maxResults`（默认 300）、`papers.topicGapMs`（默认 3200ms）、`papers.retries`：arXiv 抓取的量、请求间隔与重试（arXiv 会 429 限流，连续查询时必须留间隔）
 - `papers.heat.upvoteWeight`（默认 5）：HF 点赞在热度里的权重；`papers.heat.openalex.mailto`：OpenAlex 礼貌池联系邮箱
 - `papers.hfDailyPapers`：HF 热榜（`base` 可指向镜像，`days` 默认 7：往回抓几天的点赞用于热度）
+- `papers.affiliation`：完成单位抓取（`enabled` 默认开，`maxPapers` 默认 8 只抓「最热」榜、`gapMs` 请求间隔）——
+  数据来自 arXiv HTML 版作者块；2023-12 以前、或作者块被转换弄坏的论文可能取不到（此时用 `affil` 命令单独试）
 - `infra.releases[]`：关注的 GitHub 仓库；`infra.trending`：近期高星新项目
 - `news.feeds[]`：新闻源（`label`/`url`/`limit`，可选 `keywords`、`windowHours`）；`news.hackerNews`：HN Algolia 关键词、`minPoints`、时间窗
 - `projects.local[]`：本地仓库（`name` + `path`）；`projects.github.user`：账号级 push 事件

@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { fetchAffiliations } from './affil.mjs';
 
 const UA = 'acp-claw-daily-report/1.0 (+https://github.com/afarfabula/acp-claw)';
 
@@ -368,6 +369,31 @@ export async function collectPapers(cfg, failures) {
     const hot = ranked.filter((p) => p.heat.score >= hotMinScore).slice(0, hotPerTopic);
     return { label: t.label, query: t.query, total: enriched.length, items: latest, hot };
   });
+
+  // 5) 完成单位（只给「最热」榜单抓，控制请求量；论文太老没有 HTML 版时会拿不到）
+  const affCfg = pCfg.affiliation ?? {};
+  const maxAffil = Number(affCfg.maxPapers ?? 8);
+  if (affCfg.enabled !== false && maxAffil > 0) {
+    const want = [];
+    for (const t of topics) {
+      for (const p of t.hot) if (p.arxivId && !want.includes(p.arxivId)) want.push(p.arxivId);
+    }
+    if (want.length) {
+      const affils = await guard('affiliation', failures, () =>
+        fetchAffiliations(want, { max: maxAffil, gapMs: Number(affCfg.gapMs ?? 1200) }),
+      );
+      if (affils) {
+        for (const t of topics) {
+          for (const p of [...t.hot, ...t.items]) {
+            const a = affils.get(p.arxivId);
+            if (a?.institutions?.length) {
+              p.affiliation = { institutions: a.institutions, authors: a.authors };
+            }
+          }
+        }
+      }
+    }
+  }
 
   return {
     hours: latestHours,

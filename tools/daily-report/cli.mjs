@@ -13,6 +13,8 @@
  *                                                    栏目固定顺序，并插到「按时间倒序」的正确位置
  *   node cli.mjs doc-tree [--file <md>] [--doc <url>]  解析并打印文档里的简报条目（不写任何东西）
  *   node cli.mjs fixdoc [--dry] [--backup-dir <dir>]   重排/规范化已存在的日报文档（先备份再整体重写）
+ *   node cli.mjs affil <id|url> [...] [--json]       查论文的「完成单位」（机构/团队）与作者
+ *                                                    （解析 arXiv HTML 版的作者块；太老的论文可能没有 HTML 版）
  *   node cli.mjs config                              打印当前运行时配置路径与内容
  *
  * 配置：~/.acp-claw/daily-report/config.json（不存在则用仓库示例配置）
@@ -38,6 +40,7 @@ import {
 import { renderBrief, renderNews, renderSchool } from './render.mjs';
 import { collectNews } from './news.mjs';
 import { collectSchool } from './school.mjs';
+import { fetchAffiliation } from './affil.mjs';
 import {
   appendDoc,
   deleteDocRange,
@@ -220,6 +223,28 @@ function readDocEntries(flags) {
   return { cfg, parts, state, md, docRef, header, entries, fixes };
 }
 
+/** 查论文的「完成单位」（机构/团队）与作者：node cli.mjs affil <id|url> [...] */
+async function cmdAffil(flags, positional) {
+  if (!positional.length) throw new Error('用法: affil <arxiv-id|url> [更多 id …] [--json]');
+  const records = [];
+  for (const [i, id] of positional.entries()) {
+    const rec = await fetchAffiliation(id);
+    records.push(rec);
+    if (i + 1 < positional.length) await new Promise((r) => setTimeout(r, Number(flags.gap ?? 1200)));
+  }
+  if (flags.json) {
+    process.stdout.write(`${JSON.stringify(records, null, 2)}\n`);
+    return;
+  }
+  for (const r of records) {
+    process.stdout.write(`arXiv:${r.id}\n`);
+    process.stdout.write(`  完成单位：${r.institutions.length ? r.institutions.join(' / ') : '未取到（论文没有 HTML 版时拿不到）'}\n`);
+    if (r.authors?.length) process.stdout.write(`  作者：${r.authors.join(', ')}\n`);
+    if (!r.source && r.note) process.stdout.write(`  备注：${r.note}\n`);
+    process.stdout.write('\n');
+  }
+}
+
 async function cmdDocTree(flags) {
   const { md, docRef, header, entries } = readDocEntries(flags);
   const out = [`来源：${docRef?.url ?? flags.file}`, `简介块 ${header.length} 块 ｜ 简报 ${entries.length} 篇`, ''];
@@ -363,6 +388,7 @@ const COMMANDS = {
   collect: cmdCollect,
   news: cmdNews,
   school: cmdSchool,
+  affil: cmdAffil,
   publish: cmdPublish,
   'doc-tree': cmdDocTree,
   fixdoc: cmdFixDoc,
