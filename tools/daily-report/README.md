@@ -122,6 +122,12 @@ paperdoc --spec …        → validateSpec 校验 → renderWeeklyDoc 渲染 �
   以及 `<img src="*.svg">`；抓到 SVG 后用 LibreOffice 转 PNG 再嵌进 docx。
 - 发布后 `verifyImageAspect` 会把每张图**下载回来**，比对「图片块显示比例」与「图片真实比例」，
   不一致就报错退出——接口字段正常≠渲染正常，这个检查是吃过亏才加的。
+- **想让某篇收录「全部图表」而不是挑几张**：把 spec 里那篇的 `figures[]` 补全成 arXiv 里的全部
+  figure/table（`paper <id>` 打印清单，`--figures N` 调大上限），再重新导入即可。
+  ⚠️ 飞书**没有**给已有文档插入图片块的接口：实测 `children` / `descendant` 建 `block_type:27`
+  一律 `1770001 invalid param`，`medias/upload_all` 的 `docx_image` 也只能挂到**已存在**的图片块上
+  （`replace_image` 的前提）。所以「补图」只能整篇重新导入 → **会生成新文档**，
+  记得同步 `paperReading.docId`；纯文字/表格的补充倒是可以走 `insert` / `delete-range` 原地改。
 - `infra.releases[]`：关注的 GitHub 仓库；`infra.trending`：近期高星新项目
 - `news.feeds[]`：新闻源（`label`/`url`/`limit`，可选 `keywords`、`windowHours`）；`news.hackerNews`：HN Algolia 关键词、`minPoints`、时间窗
 - `projects.local[]`：本地仓库（`name` + `path`）；`projects.github.user`：账号级 push 事件

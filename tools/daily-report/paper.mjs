@@ -113,6 +113,8 @@ export function parseFigures(html, { id, max = 8, captionChars = 500 } = {}) {
 const cleanCell = (s) =>
   stripTags(s)
     .replace(/\\([a-zA-Z]+)/g, (_, name) => TEX_SYMBOLS[name] ?? name)
+    .replace(/\\[,\s]/g, ' ') // LaTeX 的 \, 间距
+    .replace(/\\/g, '') // 集合写法 \{...\} 被去掉花括号后残留的反斜杠
     .replace(/[{}]/g, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
