@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>手写作业生成器 · Handright Web</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23138A07'/%3E%3Cpath d='M8 23c6-1 11-6 15-14l2 2c-7 5-10 9-17 12z' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="#138A07"/>
+      <path d="M8 23c6-1 11-6 15-14l2 2c-7 5-10 9-17 12z" fill="#fff"/>
+    </svg>
+    <div class="brand-text">
+      <span class="brand-name">手写作业生成器</span>
+      <span class="brand-sub">Handright + Long Cang / DejaVu Serif</span>
+    </div>
+  </div>
+
+  <div class="topbar-actions">
+    <span class="status-pill" id="status-pill" data-state="idle">未渲染</span>
+    <label class="switch" title="改动后延迟 900ms 自动重新渲染">
+      <input type="checkbox" id="auto-compile">
+      <span>自动渲染</span>
+    </label>
+    <button class="btn btn-primary" id="btn-compile" title="Ctrl / ⌘ + Enter">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg>
+      重新渲染
+      <kbd>Ctrl ↵</kbd>
+    </button>
+    <button class="btn" id="btn-undo" title="回到上一次渲染所用的那套参数（Alt+Z），可连续点">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3a5 5 0 1 1-4.9 6h1.5A3.5 3.5 0 1 0 8 4.5V7L4.2 4 8 1v2z" fill="currentColor"/></svg>
+      <span class="btn-label">撤销参数</span>
+    </button>
+    <a class="btn" id="btn-download" href="#" title="Ctrl / ⌘ + S">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1v8.2l3.1-3.1 1.4 1.4L8 12.1 3.5 7.5l1.4-1.4L8 9.2V1zM2.5 13.5h11V15h-11z" fill="currentColor"/></svg>
+      下载 PDF
+    </a>
+  </div>
+</header>
+
+<main class="workspace" id="workspace">
+
+  <section class="pane pane-left">
+    <nav class="tabs" id="tabs">
+      <button class="tab is-active" data-tab="text">正文</button>
+      <button class="tab" data-tab="layout">排版</button>
+      <button class="tab" data-tab="hand">笔迹</button>
+      <button class="tab" data-tab="paper">墨色纸张</button>
+      <button class="tab" data-tab="font">字体</button>
+      <button class="tab" data-tab="out">输出</button>
+    </nav>
+
+    <div class="tab-body">
+
+      <div class="tab-panel is-active" data-panel="text">
+        <div class="panel-tools">
+          <button class="mini" id="btn-example"
+                  title="会覆盖正文，并把全部参数重置成 handwrite.py 的默认值（= 压缩包原始实现的效果）">
+            ✨ 载入示例（连参数一起）
+          </button>
+          <button class="mini" id="btn-clear">清空</button>
+          <span class="panel-tools-spacer"></span>
+          <span class="muted" id="text-stats">0 字 · 1 行 · 约 1 页</span>
+        </div>
+        <div class="editor-wrap"><div id="editor"></div></div>
+        <p class="hint">
+          空行会变成空行；标点默认不做行首（避头尾）。渲染引擎是
+          <a href="https://github.com/Gsllchb/Handright" target="_blank" rel="noopener">Handright</a>，
+          逐字排版 + 逐笔画随机抖动，不涉及深度学习、无 GPU。
+        </p>
+      </div>
+
+      <div class="tab-panel" data-panel="layout"><div class="controls" id="controls-layout"></div></div>
+      <div class="tab-panel" data-panel="hand"><div class="controls" id="controls-hand"></div></div>
+      <div class="tab-panel" data-panel="paper"><div class="controls" id="controls-paper"></div></div>
+      <div class="tab-panel" data-panel="font"><div class="controls" id="controls-font"></div></div>
+      <div class="tab-panel" data-panel="out"><div class="controls" id="controls-out"></div></div>
+
+    </div>
+
+    <footer class="pane-footer">
+      <span class="dot" id="dirty-dot"></span>
+      <span id="footer-text">就绪</span>
+      <span class="panel-tools-spacer"></span>
+      <span class="parity" id="parity-footer"></span>
+      <button class="mini" id="btn-reset" title="把全部参数恢复成 handwrite.py（压缩包原始实现）的默认值，并立刻重新渲染">
+        ↺ 恢复压缩包默认并重渲染
+      </button>
+    </footer>
+  </section>
+
+  <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" tabindex="0"></div>
+
+  <section class="pane pane-right">
+    <div class="preview-toolbar">
+      <div class="seg" id="view-switch">
+        <button class="is-active" data-view="image">渲染图</button>
+        <button data-view="pdf">PDF</button>
+      </div>
+      <span class="tool-divider"></span>
+      <span class="muted" id="page-info">—</span>
+      <span class="panel-tools-spacer"></span>
+      <div class="zoom-group">
+        <button class="mini icon" id="zoom-out" title="缩小">−</button>
+        <button class="mini" id="zoom-label" title="点击适合宽度">100%</button>
+        <button class="mini icon" id="zoom-in" title="放大">+</button>
+        <button class="mini" id="zoom-fit">适合宽度</button>
+        <button class="mini" id="zoom-reset">实际大小</button>
+      </div>
+    </div>
+
+    <div class="preview-body" id="preview-body">
+      <div class="pages" id="pages"></div>
+      <iframe id="pdf-frame" class="pdf-frame" hidden title="PDF 预览"></iframe>
+      <div class="pdf-hint" id="pdf-hint" hidden>
+        这里用的是浏览器自带的 PDF 阅读器；如果是空白的（部分无头/精简浏览器不带该组件），请
+        <a id="pdf-open" href="#" target="_blank" rel="noopener">在新标签页打开</a>，
+        或者直接下载 PDF。
+      </div>
+      <div class="empty-state" id="empty-state">
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M10 40V14l5-6h18l5 6v26z" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M15 22h18M15 28h18M15 34h12" stroke="currentColor" stroke-width="2"/>
+        </svg>
+        <p>左侧写好内容、调好参数，点右上角 <b>重新渲染</b>，这里就会出图。</p>
+        <p class="muted">渲染一页大约 0.4 秒；可以直接下载 PDF 打印。</p>
+      </div>
+      <div class="loading" id="loading" hidden><div class="spinner"></div><span>正在渲染…</span></div>
+      <div class="alert" id="alert" hidden></div>
+    </div>
+
+    <div class="logbar" id="logbar">
+      <button class="logbar-head" id="log-toggle">
+        <span class="log-title">编译日志</span>
+        <span class="log-summary" id="log-summary">尚未渲染</span>
+        <span class="chev" aria-hidden="true">▸</span>
+      </button>
+      <pre class="log-body" id="log-body" hidden></pre>
+    </div>
+  </section>
+
+</main>
+
+<script src="/static/vendor/codemirror.bundle.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -18,6 +18,15 @@ tools/gpu-monitor/data/
 tools/feishu-doc/data/
 tools/feishu-doc/*.token.json
 
+# Handwrite tool: 字体（50MB+，用 fetch_fonts.py + fontlib.py 重建）、venv、渲染产物
+tools/handwrite/.venv/
+tools/handwrite/fonts/*.ttf
+tools/handwrite/fonts/src/
+tools/handwrite/fonts/.fontlist.json
+tools/handwrite/out/
+tools/handwrite/**/__pycache__/
+tools/handwrite/**/*.pyc
+
 # IDE
 .vscode/*
 !.vscode/extensions.json

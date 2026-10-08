@@ -1,0 +1,28 @@
+# 这个工具的 Python 部分（engine/ + tests/）的静态检查配置。
+# 用法：ruff check tools/handwrite        （从 acp-claw 根目录跑，ruff 会自动找到这份配置）
+# 仓库其余部分是 TypeScript，用 biome（npm run check）。
+target-version = "py39"
+line-length = 110
+
+[lint]
+select = ["E", "F", "W", "I", "B", "BLE", "S", "RUF", "PLW", "ISC", "UP", "FURB"]
+
+ignore = [
+  # 用 typing.Dict / typing.Optional 是为了兼容 py3.8/3.9
+  "UP006", "UP035", "UP045", "UP037",
+  # 源文件顶部保留 utf-8 声明，方便非 UTF-8 默认编码的编辑器打开中文
+  "UP009",
+  # FastAPI 的 File(...) / Field(...) 必须写在参数默认值里
+  "B008",
+  # 字体扫描 / 缓存读取里"某一步失败就跳过"是有意的
+  "S110", "S112",
+  # 面向用户和日志的字符串一律用中文全角标点，不算歧义字符
+  "RUF001", "RUF002", "RUF003",
+  # 按名字调用本地工具（python / pdfinfo / pdftoppm），不是执行不可信输入
+  "S603", "S607",
+  # 测试与诊断脚本用 urllib 打自己配置的 BASE
+  "S310",
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["S101"]   # 测试里用 assert 没问题

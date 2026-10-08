@@ -293,6 +293,9 @@ An unofficial add-on (GPU monitor) lives in [`tools/gpu-monitor`](./tools/gpu-mo
 `thread ... already has an active writer` error: it lists which processes hold a Codex
 session's write lock (`sem list`), can release the ones that are no longer attached to your
 terminal (`sem clean`), and ships an interactive TUI (`sem`).
+[`tools/handwrite`](./tools/handwrite) turns a plain text file into a handwriting-style A4 PDF
+(Chinese handwriting fonts + per-stroke jitter, math symbols merged in, no GPU); it also ships
+an Overleaf-style web UI for tuning parameters live.
 
 ### How to Add a Channel
 

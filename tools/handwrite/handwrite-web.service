@@ -1,0 +1,22 @@
+# 手写作业生成器的网页版（可选常驻）
+#
+#   sudo cp handwrite-web.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now handwrite-web
+#
+# 注意：路径按本机调整；首次使用前先跑 `node cli.mjs setup --with-fonts` 建好 .venv 和字体。
+# 只想要命令行渲染的话不需要这个 service（直接 node cli.mjs render 即可）。
+[Unit]
+Description=Handwrite web UI (Handright handwriting-style PDF generator)
+After=network.target
+
+[Service]
+Type=simple
+User=quyanyi
+WorkingDirectory=/home_ext/quyanyi/acp-claw/tools/handwrite
+ExecStart=/home/quyanyi/.local/bin/node cli.mjs serve --port 8899
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+# Web 服务依赖（渲染管线本身的依赖见 ../requirements.txt）
+fastapi>=0.110
+uvicorn>=0.27
+python-multipart>=0.0.9
+
+# 渲染与字体
+handright==8.2.0
+Pillow>=10.0.0
+fonttools>=4.40.0

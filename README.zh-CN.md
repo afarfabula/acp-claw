@@ -288,6 +288,9 @@ npm test
 [`skills/feishu-doc/SKILL.md`](./skills/feishu-doc/SKILL.md)，
 用法与权限说明见 [`tools/feishu-doc/README.md`](./tools/feishu-doc/README.md)。
 非官方补充工具（GPU 监控）见 [`tools/gpu-monitor`](./tools/gpu-monitor)。
+[`tools/handwrite`](./tools/handwrite)（手写作业生成器）把一段纯文本渲染成**看起来像手写**
+的 A4 PDF：中文字手写体 + 逐笔画随机抖动，自动补齐 α β λ ‖·‖² 等数学符号，无 GPU；
+另带一个 Overleaf 风格网页版，可以在浏览器里边看边调参数。
 [`tools/sem`](./tools/sem) 是 Codex 会话管理器：`codex resume` 报
 `thread ... already has an active writer` 时，`sem list` 列出谁占着锁，`sem clean`
 把已经不在你终端里的占用者放掉；直接敲 `sem` 还能进交互式界面。
