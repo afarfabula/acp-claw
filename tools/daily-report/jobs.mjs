@@ -292,12 +292,15 @@ async function fetchJd({ keywords, timeoutMs, maxItems = 200 } = {}) {
     if (!isIntern) continue;
     const blob = `${p.positionName ?? ''} ${p.workContent ?? ''} ${p.qualification ?? ''}`.toLowerCase();
     if (!kw.some((k) => blob.includes(k))) continue;
+    // 城市在 requirementVoList[].workCity（如"重庆市-重庆市"、"山东省-济南市"），去重拼接
+    const cities = [...new Set((p.requirementVoList ?? []).map((r) => cleanText(r.workCity)).filter(Boolean))];
+    const cityStr = cities.map((c) => c.replace(/^.*?-/, '')).join('/');
     out.push({
       externalId: String(p.publishId),
       title: cleanText(p.positionName),
       companyName: '京东',
-      city: '', // 京东官网在部分环境下不返回工作城市字段
-      cityUnknown: true,
+      city: cityStr,
+      cityUnknown: !cityStr,
       type: '实习',
       department: dir,
       url: `https://campus.jd.com/#/details?id=${p.publishId}`,

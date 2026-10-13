@@ -86,7 +86,10 @@ export function renderJobsWeb(jobs, opts = {}) {
   h1 small { color: var(--muted); font-weight: normal; font-size: 12px; margin-left: 8px; }
   .search { flex:1; min-width: 200px; padding:8px 12px; border:1px solid var(--line); border-radius: 8px; font-size:14px; }
   .search:focus { outline:2px solid var(--brand); border-color:transparent; }
-  main { max-width: 980px; margin: 16px auto 60px; padding: 0 20px; }
+  .btn { padding:8px 14px; border:1px solid var(--line); border-radius: 8px; background: var(--card); cursor:pointer; font-size:13px; white-space:nowrap; }
+  .btn.active { background: var(--brand); color:#fff; border-color:var(--brand); }
+  .btn:hover { border-color: var(--brand); }
+main { max-width: 980px; margin: 16px auto 60px; padding: 0 20px; }
   .stats { display:flex; flex-wrap:wrap; gap:8px; margin: 8px 0 16px; }
   .stat { background: var(--card); border:1px solid var(--line); border-radius: 999px; padding:4px 12px; font-size:12px; color: var(--muted); }
   .stat b { color: var(--ink); margin-left: 2px; }
@@ -117,6 +120,8 @@ export function renderJobsWeb(jobs, opts = {}) {
   <div class="top-in">
     <h1>实习机会 <small>大模型 / AI Infra · 更新于 ${esc(genLocal)}</small></h1>
     <input class="search" id="q" placeholder="搜索岗位 / 公司 / 关键词…" autofocus>
+    <button class="btn" id="btn-cd" title="成都的排前面">📍 成都优先</button>
+    <button class="btn" id="btn-cd-only" title="只看成都">只看成都</button>
   </div>
 </header>
 <main>
@@ -129,17 +134,55 @@ export function renderJobsWeb(jobs, opts = {}) {
   const items = ${allItemsJson};
   const grid = document.getElementById('grid');
   const cards = Array.from(grid.children);
-  document.getElementById('q').addEventListener('input', (e) => {
-    const q = e.target.value.trim().toLowerCase();
+  let cdFirst = false, cdOnly = false;
+
+  function isChengdu(it) {
+    return (it.city || '').includes('成都') || (it.cityUnknown === false && (it.city || '').includes('成都'));
+  }
+
+  function applySort() {
+    const order = items.map((it, i) => i);
+    if (cdFirst) {
+      order.sort((a, b) => {
+        const ca = isChengdu(items[a]) ? 0 : 1;
+        const cb = isChengdu(items[b]) ? 0 : 1;
+        return ca - cb || a - b;
+      });
+    }
+    const frag = document.createDocumentFragment();
+    for (const i of order) frag.appendChild(cards[i]);
+    grid.appendChild(frag);
+  }
+
+  function applyFilter() {
+    const q = document.getElementById('q').value.trim().toLowerCase();
     let shown = 0;
     cards.forEach((c, i) => {
       const it = items[i];
       const hay = [it.title, it.company, it.city, it.jd, ...(it.tags||[])].join(' ').toLowerCase();
-      const ok = !q || hay.includes(q);
+      const okQ = !q || hay.includes(q);
+      const okCd = !cdOnly || isChengdu(it);
+      const ok = okQ && okCd;
       c.style.display = ok ? '' : 'none';
       if (ok) shown++;
     });
     document.getElementById('empty').style.display = shown ? 'none' : 'block';
+  }
+
+  document.getElementById('q').addEventListener('input', (e) => {
+    applyFilter();
+  });
+
+  document.getElementById('btn-cd').addEventListener('click', (e) => {
+    cdFirst = !cdFirst;
+    e.target.classList.toggle('active', cdFirst);
+    applySort();
+  });
+
+  document.getElementById('btn-cd-only').addEventListener('click', (e) => {
+    cdOnly = !cdOnly;
+    e.target.classList.toggle('active', cdOnly);
+    applyFilter();
   });
 </script>
 </body>
