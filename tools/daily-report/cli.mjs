@@ -7,6 +7,14 @@
  *   node cli.mjs school [--json] [--days N] [--all]  采集学校/学院通知（信通学院+研究生院+学工部）
  *                                                    → data/<date>-school.json + <date>-school.md
  *                                                    （默认只标「新增」并记录已读；--all 忽略已读且不回写，--no-detail 不抓正文）
+ *   node cli.mjs jobs [--json] [--all] [--city 成都] [--keyword "大模型,推理"] [--publish] [--doc <url|id>]
+ *                                                    采集实习岗位（默认只看成都 base，只保留大模型 / AI Infra 方向）
+ *                                                    来源顺序：字节跳动 → 京东 → 阿里巴巴 → 腾讯 → 初创/其他
+ *                                                    → data/<date>-jobs.json + <date>-jobs.md
+ *                                                    （默认只标「新增」并记录已读；--all 忽略已读；
+ *                                                     加 --publish 时把「还没写过的」新增岗位写进飞书文档的
+ *                                                     Story 1 基座模型 / Story 2 Ai infra 栏目，并记住已写）
+ *   node cli.mjs jobs --web [--keyword ...]          → 渲染 HTML → pagecrypt 加密 → 推到 GitHub Pages（afarfabula.github.io）
  *   node cli.mjs publish --file <md> [--doc auto|<url|id>] [--chat <chatId>]
  *                                                    把日报写入飞书文档（默认按月份自动建/找文档）；--chat 时同时发群
  *                                                    写入前会规范化：条目标题 `## YYYY-MM-DD HH:MM`、
@@ -41,7 +49,10 @@ import {
   collectProjects,
   collectWeather,
 } from './collect.mjs';
-import { renderBrief, renderNews, renderSchool } from './render.mjs';
+import { renderBrief, renderJobs, renderNews, renderSchool } from './render.mjs';
+import { collectJobs, DEFAULT_DOC_SECTIONS, pickForPublish, renderJobsPublishMarkdown } from './jobs.mjs';
+import { renderJobsWeb } from './jobs-web.mjs';
+import { deployJobsWeb, generateWebPassword } from './jobs-deploy.mjs';
 import { collectNews } from './news.mjs';
 import { collectSchool } from './school.mjs';
 import { fetchAffiliation } from './affil.mjs';
@@ -69,6 +80,7 @@ import {
   deleteDocRange,
   docTitleFromPattern,
   docBlocks,
+  docMeta,
   docMarkdown,
   ensureDoc,
   insertDocMarkdown,
@@ -559,7 +571,7 @@ async function cmdNews(flags) {
 }
 
 async function cmdSchool(flags) {
-  const { config: cfg, missing } = loadConfig();
+  const { config: cfg, path: cfgPath, missing } = loadConfig();
   if (missing) console.error('⚠️  未找到运行时配置，使用仓库示例配置');
   const failures = [];
   const days = typeof flags.days === 'string' ? Number(flags.days) : undefined;
@@ -606,10 +618,203 @@ async function cmdSchool(flags) {
   if (failures.length) process.stderr.write(`[school] 失败项: ${failures.join(' | ')}\n`);
 }
 
+/** 读取文档的根级子块（用用户身份直连 docx API，拿到准确的插入下标） */
+async function docRootChildren(docId) {
+  const { getAccessToken } = await import('../feishu-doc/auth.mjs');
+  const base = 'https://open.feishu.cn/open-apis';
+  const headers = { Authorization: `Bearer ${await getAccessToken()}` };
+  const blocks = new Map();
+  let pageToken = '';
+  do {
+    const url =
+      `${base}/docx/v1/documents/${docId}/blocks?page_size=500` +
+      (pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : '');
+    const j = await (await fetch(url, { headers })).json();
+    for (const b of j?.data?.items ?? []) blocks.set(b.block_id, b);
+    pageToken = j?.data?.has_more ? j?.data?.page_token : '';
+  } while (pageToken);
+  const root = blocks.get(docId) ?? [...blocks.values()].find((b) => b.block_type === 1);
+  return (root?.children ?? []).map((id) => blocks.get(id)).filter(Boolean);
+}
+
+const blockText = (b) => {
+  const el = b?.text?.elements ?? b?.heading1?.elements ?? b?.heading2?.elements ?? b?.heading3?.elements ?? [];
+  return el.map((e) => e.text_run?.content ?? '').join('').trim();
+};
+
+/**
+ * 算出每个栏目该插到哪个下标：优先用 afterText（在该块之后插入），
+ * 这样即使文档里已经写过几轮，也不会被历史内容顶偏
+ */
+async function resolveSectionIndexes(docRef, groups) {
+  const needAnchor = groups.filter((g) => g.section.afterText);
+  if (!needAnchor.length) return new Map(groups.map((g) => [g.section.label, g.section.index ?? 0]));
+  const meta = docMeta({ url: docRef });
+  const children = await docRootChildren(meta.document_id);
+  const map = new Map();
+  for (const g of groups) {
+    if (!g.section.afterText) {
+      map.set(g.section.label, g.section.index ?? 0);
+      continue;
+    }
+    const i = children.findIndex((b) => blockText(b) === g.section.afterText);
+    if (i < 0) throw new Error(`文档里找不到栏目锚点「${g.section.afterText}」`);
+    map.set(g.section.label, i + 1);
+  }
+  return map;
+}
+
+/** 把「还没写过」的新增岗位写进飞书文档的 Story 栏目（写在 state.json 的 jobs.published） */
+async function publishJobsToDoc(cfg, jobs, parts, docOverride, { ignoreHandled = false } = {}) {
+  const docConf = cfg.jobs?.doc ?? {};
+  const docRef = docOverride || docConf.url;
+  if (!docRef) throw new Error('未配置 jobs.doc.url（也可以用 --doc <url|id> 指定）');
+  const sections = docConf.sections?.length ? docConf.sections : DEFAULT_DOC_SECTIONS;
+  const state = readState();
+  const jobsState = (state.jobs ??= {});
+  const published = (jobsState.published ??= {});
+  const skipped = (jobsState.skipped ??= {});
+  // 已经写过 / 之前判定「不写」的，都不再重复处理
+  const handled = {};
+  if (!ignoreHandled) {
+    Object.assign(handled, published);
+    for (const [id, date] of Object.entries(skipped)) handled[id] ??= date;
+  } else {
+    // --all：整批重写，顺手把「跳过」记录也清掉（否则以后还是不会再写）
+    for (const key of Object.keys(skipped)) delete skipped[key];
+  }
+  const all = pickForPublish(jobs.items ?? [], handled, sections);
+  // maxPerSection = 0 表示不限量（全量写进文档）
+  const cap = docConf.maxPerSection ?? 12;
+  const take = (arr) => (cap > 0 ? arr.slice(0, cap) : arr);
+  const groups = all.map((g) => ({ ...g, items: take(g.items) })).filter((g) => g.items.length);
+  const overflow = all.flatMap((g) => (cap > 0 ? g.items.slice(cap) : []));
+  if (!groups.length) return { written: 0, skipped: 0, groups: [] };
+  const indexOf = await resolveSectionIndexes(docRef, groups);
+  // 从后往前插入：先写 index 大的栏目，避免前面的插入把后面的位置顶走
+  const ordered = [...groups].sort(
+    (a, b) => (indexOf.get(b.section.label) ?? 0) - (indexOf.get(a.section.label) ?? 0),
+  );
+  const written = [];
+  for (const g of ordered) {
+    const md = renderJobsPublishMarkdown(g.items, { date: parts.date, label: g.section.label });
+    insertDocMarkdown({ url: docRef }, md, indexOf.get(g.section.label) ?? 0);
+    for (const it of g.items) published[it.id] = parts.date;
+    written.push({ section: g.section.label, count: g.items.length });
+  }
+  // 每栏只写前 N 条：其余记进 skipped，避免下次又把同一批「补写」进文档
+  for (const it of overflow) skipped[it.id] = parts.date;
+  jobsState.lastPublishedAt = new Date().toISOString();
+  jobsState.lastPublishedDate = parts.date;
+  writeState(state);
+  return {
+    written: written.reduce((sum, x) => sum + x.count, 0),
+    skipped: overflow.length,
+    groups: written,
+  };
+}
+
+async function cmdJobs(flags) {
+  const { config: cfg, path: cfgPath, missing } = loadConfig();
+  if (missing) console.error('⚠️  未找到运行时配置，使用仓库示例配置');
+  const failures = [];
+  const jobs = await collectJobs(cfg, failures, {
+    all: Boolean(flags.all),
+    markSeen: !flags.all,
+    city: typeof flags.city === 'string' ? flags.city : undefined,
+    keywords:
+      typeof flags.keyword === 'string'
+        ? String(flags.keyword)
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined,
+  });
+  const parts = localParts(new Date(), cfg.timezone);
+  jobs.stamp = parts.stamp;
+  const brief = renderJobs(jobs, { timeZone: cfg.timezone });
+  const dataDir = resolveDataDir(cfg);
+  const jsonPath = join(dataDir, `${parts.date}-jobs.json`);
+  const briefPath = join(dataDir, `${parts.date}-jobs.md`);
+  writeFileSync(jsonPath, JSON.stringify(jobs, null, 2), 'utf-8');
+  writeFileSync(briefPath, brief, 'utf-8');
+
+  let published = null;
+  if (flags.publish) {
+    published = await publishJobsToDoc(cfg, jobs, parts, typeof flags.doc === 'string' ? flags.doc : undefined, {
+      // --all：忽略「已写过/已跳过」的记录，重新写一遍（调试用）
+      ignoreHandled: Boolean(flags.all),
+    });
+  }
+
+  // --web：渲染 HTML → pagecrypt 加密 → 推到 GitHub Pages（afarfabula.github.io）
+  let webDeployed = null;
+  if (flags.web) {
+    const webConf = (cfg.jobs ??= {}).web ??= {};
+    if (!webConf.password) {
+      webConf.password = generateWebPassword();
+      if (cfgPath) {
+        writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), 'utf-8');
+        process.stderr.write(`[jobs --web] 首次运行已生成访问密码并保存到 ${cfgPath}\n`);
+      }
+    }
+    const html = renderJobsWeb(jobs, { generatedAt: new Date().toISOString() });
+    const htmlPath = join(dataDir, `${parts.date}-jobs.html`);
+    writeFileSync(htmlPath, html, 'utf-8');
+    process.stderr.write(`[jobs --web] 渲染 HTML：${htmlPath}（${jobs.items.length} 条）\n`);
+    webDeployed = await deployJobsWeb(htmlPath, webConf, (msg) => process.stderr.write(`[jobs --web] ${msg}\n`));
+  }
+
+  if (flags.json) {
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          jsonPath,
+          briefPath,
+          summary: jobs.summary,
+          companies: jobs.companies,
+          newItems: jobs.newItems.map((it) => ({
+            id: it.id,
+            company: it.company,
+            title: it.title,
+            city: it.city,
+            cityUnknown: it.cityUnknown,
+            type: it.type,
+            tags: it.tags,
+            publishedAt: it.publishedAt,
+            url: it.url,
+          })),
+          published,
+          webDeployed,
+          notes: jobs.notes,
+          failures,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  } else {
+    process.stdout.write(`${brief}\n`);
+    process.stderr.write(`\n[jobs] 素材已写入 ${briefPath} / ${jsonPath}\n`);
+    if (published) {
+      process.stderr.write(
+        `[jobs] 已写入文档 ${published.written} 个岗位` +
+          (published.groups.length
+            ? `：${published.groups.map((g) => `${g.section} ${g.count} 个`).join(' / ')}`
+            : '（没有需要新写的）') +
+          (published.skipped ? `；另有 ${published.skipped} 个本轮不写（每栏只写前 N 条，已记 skipped）` : '') +
+          '\n',
+      );
+    }
+  }
+  if (failures.length) process.stderr.write(`[jobs] 失败项: ${failures.join(' | ')}\n`);
+}
+
 const COMMANDS = {
   collect: cmdCollect,
   news: cmdNews,
   school: cmdSchool,
+  jobs: cmdJobs,
   affil: cmdAffil,
   comments: cmdComments,
   reply: cmdReply,

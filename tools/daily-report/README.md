@@ -22,6 +22,7 @@ cron（每天 08:30，--fresh-session）→ 新会话里的 agent
 | 项目进展 | 本地 `git log/status` + GitHub 事件 | “用最新 commit 当记忆”，含未提交改动数量 |
 | AI 新闻 | RSS/Atom 多源 + HN Algolia API | 量子位/雷峰网/Google AI/OpenAI/HuggingFace Blog + Hacker News（按热度过滤），去重 + 时间窗 |
 | 学校通知 | 研究生院 / 信通学院 / 学生工作部 | 放假通知、奖助学金、教学安排、培养学籍、学位答辩、就业竞赛；按标签分类 + 增量去重（默认只报新出现的） |
+| 实习岗位 | 字节校招官网 / 阿里校招官网 / 京东校招官网 / 腾讯招聘官网 / 百度（可选）/ 实习僧 | 默认只看**成都** base、只留**大模型 + AI Infra** 方向；带 JD 原文；增量去重，可选写入飞书文档的指定栏目 |
 
 ## 用法
 
@@ -37,6 +38,13 @@ node $CLI school --json               # 只打印路径、新增条数与各源�
 node $CLI school --days 30            # 放宽时间窗（首次跑建议大一点，把历史一次记进已读）
 node $CLI school --all                # 忽略已读状态，全部当作新增（调试用，不更新已读）
 node $CLI school --no-detail          # 不抓正文摘要（更快，只用标题）
+node $CLI jobs                        # 采集实习岗位（成都 base，大模型 / AI Infra）：落盘 data/<日期>-jobs.{json,md}
+node $CLI jobs --json                 # 只打印路径、命中数与各来源状态
+node $CLI jobs --all                  # 忽略已读，全部当新增（调试用，不更新已读）
+node $CLI jobs --keyword "大模型,推理"  # 临时改检索关键词
+node $CLI jobs --publish              # 把「还没写过」的新增岗位写进 config.jobs.doc.url 的 Story 栏目
+node $CLI jobs --publish --doc <url>  # 临时指定写入的目标文档
+node $CLI jobs --publish --all        # 忽略「已写/已跳过」记录，整批重写（调试用）
 node $CLI publish --file <日报.md>     # 写入飞书文档（按 config.feishu.docTitlePattern 自动建/找当月文档）
 node $CLI publish --file <日报.md> --chat oc_xxx   # 同时用应用身份发一份到群
 node $CLI publish --file <新闻.md> --title "AI新闻 {yyyy}-{MM}" --open-id ou_xxx  # 归档 + 单聊推送
@@ -164,6 +172,47 @@ paperdoc --spec …        → validateSpec 校验 → renderWeeklyDoc 渲染 �
 - `detailTags`：哪些标签需要抓正文
 
 > 首次跑建议 `node $CLI school --days 30`，把近一个月的存量一次性标记为已读，之后每天就只报真正的新通知。
+
+## 实习岗位（`jobs`，2026-10-13）
+
+目标：盯「成都 base + 大模型 / AI Infra 方向」的实习岗位，带 JD 原文，逐次增量、不重复。
+
+| 来源 | 接口 | 说明 |
+| --- | --- | --- |
+| 字节跳动（校招） | `POST https://jobs.bytedance.com/api/v1/csrf/token` 拿令牌 → `POST /api/v1/search/job/posts`（`x-csrf-token` 头） | **只取实习**：`recruitment_id_list=["202","301"]`（前端 `P={1:"1",2:"201",3:"202,301"}` 的 type=3 映射）；2026-10-13 打通——此前直接 POST 会被边缘网关 405，必须先拿 CSRF |
+| 阿里巴巴（校招） | `GET https://campus-talent.alibaba.com/campus/position` 拿 SESSION+XSRF cookie → `POST /searchCondition/listBatch` 发现实习批次 → `POST /position/search`（`x-xsrf-token` 头、`batchId`=实习批次） | 实习岗位在**校园招聘站** campus-talent.alibaba.com（不是社招站 talent.alibaba.com）；批次分「日常实习 / 研究型实习」，按季节会换 ID，运行时自动发现、失败用兜底 ID |
+| 京东（校招） | `POST https://campus.jd.com/api/wx/position/recommendPage` | 直接拿到岗位 + `workContent`/`qualification`（JD 原文）；实习岗位的 `jobDirection` 里带「实习生」；**该接口不返回工作城市**，所以城市列标「未标注」 |
+| 腾讯 | `GET https://careers.tencent.com/tencentcareer/api/post/Query` | `attrId=3` 是「实习生招聘」；按 `LocationName` 过滤城市；带 `Responsibility`（JD）与官网详情链接 |
+| 百度（可选，默认关） | `POST https://talent.baidu.com/httservice/getPostListNew`（`recruitType=INTERN`） | 字段最全（`workPlace`/`workContent`/`serviceCondition`/`publishDate`） |
+| 实习僧（聚合，兜底 + 初创） | `GET https://www.shixiseng.com/interns?keyword=…&city=成都` | Nuxt SSR，岗位数据在 `window.__NUXT__` 里（用 `vm` 求值后取）；字节/阿里官方接口失败时自动回退到这里按公司名筛 |
+
+- 方向判定在 `DEFAULT_DIRECTIONS`（大模型 / AI Infra 两组关键词，可多标签）；**必须命中方向标签才算数**，只靠检索词命中的会被丢掉（例如金融「量化实习」≠ 模型量化）
+- 噪音词在 `DEFAULT_NOISE`（销售/运营/标注/量化策略…），**只看标题命中就丢弃**（JD 团队介绍里常自带「运营/销售」字样，按全文命中会误杀技术岗）
+- 增量：`state.json` 的 `jobs.seen`（跑过的都记下）与 `jobs.published`（写进文档的记下，避免重复写）
+- 写文档：`jobs --publish` 会把**还没写过**的岗位插到对应栏目
+  （`sections[].afterText` 指定插到哪个块之后——按锚点定位，所以重复写几轮也不会插歪；`index` 只是没有 `afterText` 时的兜底）
+  - `maxPerSection`（默认 12）限制每栏每次最多写几条，多出来的记 `skipped` 不再补写；**设成 `0` 表示不限量（全量写进文档）**
+  - 一栏一次插入的内容 = 速览表格（每行带链接）+ 每个岗位的 JD / 要求 / 链接
+
+配置（`~/.acp-claw/daily-report/config.json` 的 `jobs` 段）：
+
+```json
+{
+  "jobs": {
+    "city": "成都",
+    "keywords": ["大模型", "LLM", "多模态", "推理", "AI Infra", "训练", "量化", "Agent", "强化学习", "具身", "端侧"],
+    "maxPerCompany": 25,
+    "doc": {
+      "url": "https://acnpz73fogoq.feishu.cn/wiki/IDDkwLDmLiHnMeklHgecrFkgnnf",
+      "maxPerSection": 0,
+      "sections": [
+        { "tag": "大模型", "label": "Story 1 · 基座模型", "afterText": "基座模型", "index": 3 },
+        { "tag": "AI Infra", "label": "Story 2 · Ai infra", "afterText": "Ai infra", "index": 5 }
+      ]
+    }
+  }
+}
+```
 
 ## 投递说明
 

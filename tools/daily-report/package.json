@@ -1,0 +1,15 @@
+{
+  "name": "daily-report",
+  "version": "1.0.0",
+  "description": "给「每天固定时间让大模型写一份日报」这类需求做的采集+投递工具，配合 acp-claw 的 cron 任务使用：",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "pagecrypt": "^7.1.0"
+  }
+}
