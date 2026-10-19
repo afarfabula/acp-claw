@@ -38,13 +38,17 @@ node $CLI school --json               # 只打印路径、新增条数与各源�
 node $CLI school --days 30            # 放宽时间窗（首次跑建议大一点，把历史一次记进已读）
 node $CLI school --all                # 忽略已读状态，全部当作新增（调试用，不更新已读）
 node $CLI school --no-detail          # 不抓正文摘要（更快，只用标题）
-node $CLI jobs                        # 采集实习岗位（成都 base，大模型 / AI Infra）：落盘 data/<日期>-jobs.{json,md}
+node $CLI jobs                        # 采集成都技术实习：官方源 + 实习僧 + DeepSeek 网页核验
 node $CLI jobs --json                 # 只打印路径、命中数与各来源状态
 node $CLI jobs --all                  # 忽略已读，全部当新增（调试用，不更新已读）
 node $CLI jobs --keyword "大模型,推理"  # 临时改检索关键词
 node $CLI jobs --publish              # 把「还没写过」的新增岗位写进 config.jobs.doc.url 的 Story 栏目
 node $CLI jobs --publish --doc <url>  # 临时指定写入的目标文档
 node $CLI jobs --publish --all        # 忽略「已写/已跳过」记录，整批重写（调试用）
+node $CLI jobs --search-mode shadow   # Search/Fetch 影子模式（只记录，不并入正式结果）
+node $CLI jobs --search-mode augment  # 把已 Fetch + 语义核验的网页岗位并入正式结果
+node $CLI jobs --no-search            # 临时关闭网页发现
+node $CLI jobs --no-semantic          # 临时关闭 flash 抽取，完全走规则层
 node $CLI publish --file <日报.md>     # 写入飞书文档（按 config.feishu.docTitlePattern 自动建/找当月文档）
 node $CLI publish --file <日报.md> --chat oc_xxx   # 同时用应用身份发一份到群
 node $CLI publish --file <新闻.md> --title "AI新闻 {yyyy}-{MM}" --open-id ou_xxx  # 归档 + 单聊推送
@@ -175,20 +179,38 @@ paperdoc --spec …        → validateSpec 校验 → renderWeeklyDoc 渲染 �
 
 ## 实习岗位（`jobs`，2026-10-13）
 
-目标：盯「成都 base + 大模型 / AI Infra 方向」的实习岗位，带 JD 原文，逐次增量、不重复。
+目标：先收集「成都 base」的完整实习池，再给岗位打大模型 / AI Infra / 算法 / 开发 / 数据等方向标签；网页可直接筛选和排序，卡片直接展示 JD。
 
 | 来源 | 接口 | 说明 |
 | --- | --- | --- |
 | 字节跳动（校招） | `POST https://jobs.bytedance.com/api/v1/csrf/token` 拿令牌 → `POST /api/v1/search/job/posts`（`x-csrf-token` 头） | **只取实习**：`recruitment_id_list=["202","301"]`（前端 `P={1:"1",2:"201",3:"202,301"}` 的 type=3 映射）；2026-10-13 打通——此前直接 POST 会被边缘网关 405，必须先拿 CSRF |
 | 阿里巴巴（校招） | `GET https://campus-talent.alibaba.com/campus/position` 拿 SESSION+XSRF cookie → `POST /searchCondition/listBatch` 发现实习批次 → `POST /position/search`（`x-xsrf-token` 头、`batchId`=实习批次） | 实习岗位在**校园招聘站** campus-talent.alibaba.com（不是社招站 talent.alibaba.com）；批次分「日常实习 / 研究型实习」，按季节会换 ID，运行时自动发现、失败用兜底 ID |
-| 京东（校招） | `POST https://campus.jd.com/api/wx/position/recommendPage` | 直接拿到岗位 + `workContent`/`qualification`（JD 原文）；实习岗位的 `jobDirection` 里带「实习生」；**该接口不返回工作城市**，所以城市列标「未标注」 |
+| 京东（校招） | `POST https://campus.jd.com/api/wx/position/recommendPage` | 直接拿到岗位 + `workContent`/`qualification`（JD 原文）；实习岗位的 `jobDirection` 里带「实习生」；城市取自 `requirementVoList[].workCity`，并按目标城市过滤 |
 | 腾讯 | `GET https://careers.tencent.com/tencentcareer/api/post/Query` | `attrId=3` 是「实习生招聘」；按 `LocationName` 过滤城市；带 `Responsibility`（JD）与官网详情链接 |
 | 百度（可选，默认关） | `POST https://talent.baidu.com/httservice/getPostListNew`（`recruitType=INTERN`） | 字段最全（`workPlace`/`workContent`/`serviceCondition`/`publishDate`） |
-| 实习僧（聚合，兜底 + 初创） | `GET https://www.shixiseng.com/interns?keyword=…&city=成都` | Nuxt SSR，岗位数据在 `window.__NUXT__` 里（用 `vm` 求值后取）；字节/阿里官方接口失败时自动回退到这里按公司名筛 |
+| 实习僧（聚合主池） | `GET https://www.shixiseng.com/interns?keyword=…&city=成都&page=N` + 岗位详情页 | Nuxt SSR 分页遍历；列表负责发现岗位，详情页补齐干净的岗位名、公司、发布时间和完整 JD。列表页标题里的字体反爬字符会用详情页字段覆盖 |
+| DeepSeek 网页发现 | `POST https://api.deepseek.com/v1/tools/search` → `POST /v1/tools/fetch` | Search 按 query 找候选，Fetch 把页面转成 Markdown，再由 flash 核验公司/岗位/城市/实习/技术岗；`shadow` 模式只记录效果，不混入正式岗位池 |
 
-- 方向判定在 `DEFAULT_DIRECTIONS`（大模型 / AI Infra 两组关键词，可多标签）；**必须命中方向标签才算数**，只靠检索词命中的会被丢掉（例如金融「量化实习」≠ 模型量化）
-- 噪音词在 `DEFAULT_NOISE`（销售/运营/标注/量化策略…），**只看标题命中就丢弃**（JD 团队介绍里常自带「运营/销售」字样，按全文命中会误杀技术岗）
+- 官方专用 API 是权威主源；网页发现只补长尾公司，不覆盖官方字段
+- 发现词在 `DEFAULT_DISCOVERY_KEYWORDS`，只负责扩大成都实习池，**不淘汰方向不匹配的岗位**
+- 方向采用「标题/部门加权 + JD 证据 + flash 结构化抽取」：同样出现“性能优化”，前端岗仍归软件开发，模型/Infra 岗才归 AI Infra
+- 跨来源去重先用 URL，再用同公司/城市的归一化标题相似度；官方 > 实习僧 > 网页发现，合并时保留更权威记录并回填缺失薪资
+- 每个岗位输出 0–100 匹配分和理由，默认按你的研究方向排序（视频/多模态、视觉 token 压缩、量化、RL 后训练、推理框架/Infra）
+- 噪音词在 `DEFAULT_NOISE`，只标记和排序降权，不再从池子里删除
+- **长期硬标准**：默认 `technicalOnly=true`，只保留技术方向；产品、运营、设计、编辑、市场等非技术岗直接排除
+- **长期硬标准**：默认 `minDailySalary=200`，有明确薪资但起薪不足 200/天的岗位直接排除
+- 薪资按 4 级取证，页面上不再留空：
+  1. 源站结构化字段（`salary` / `minSalary` / `maxSalary` 等）
+  2. JD 正文里的明确写法（`300-500元/天`、`4.5K-7.5K/月`、时薪/周薪/年薪均可折算为日薪）
+  3. 去重后的同公司同岗位聚合来源回填
+  4. 前三层都没有时，按公司、技术方向给出保守参考区间，并明确标「参考」
+  - 字节校招接口实测 `job_post_info.min_salary/max_salary` 对成都实习全部为 `null`，详情页接口也不含薪资；这类岗位必须用后两层，不能伪造为官网值
+- `allowUnknownSalary=true` 控制第 4 层关闭后是否保留无薪资讯岗位；`estimateUnknownSalary=true` 控制是否启用参考区间
+- 薪资解析回归测试：`node tools/daily-report/test-jobs-salary.mjs`
+- 语义、去重、匹配分回归测试：`node tools/daily-report/test-jobs-intelligence.mjs`
 - 增量：`state.json` 的 `jobs.seen`（跑过的都记下）与 `jobs.published`（写进文档的记下，避免重复写）
+- 语义结果缓存：`state.json` 的 `jobs.semantic`，按岗位内容 hash 复用；默认保留 45 天
+- 网页发现日志：`state.json` 的 `jobs.discovery`，记录查询数、Fetch 数、核验数、费用估算、拒绝原因
 - 写文档：`jobs --publish` 会把**还没写过**的岗位插到对应栏目
   （`sections[].afterText` 指定插到哪个块之后——按锚点定位，所以重复写几轮也不会插歪；`index` 只是没有 `afterText` 时的兜底）
   - `maxPerSection`（默认 12）限制每栏每次最多写几条，多出来的记 `skipped` 不再补写；**设成 `0` 表示不限量（全量写进文档）**
@@ -200,8 +222,40 @@ paperdoc --spec …        → validateSpec 校验 → renderWeeklyDoc 渲染 �
 {
   "jobs": {
     "city": "成都",
-    "keywords": ["大模型", "LLM", "多模态", "推理", "AI Infra", "训练", "量化", "Agent", "强化学习", "具身", "端侧"],
-    "maxPerCompany": 25,
+    "technicalOnly": true,
+    "minDailySalary": 200,
+    "allowUnknownSalary": true,
+    "estimateUnknownSalary": true,
+    "discoveryKeywords": ["实习", "人工智能", "算法", "开发", "数据", "产品", "运营"],
+    "maxPagesPerKeyword": 40,
+    "maxPool": 1000,
+    "fetchDetails": true,
+    "detailConcurrency": 8,
+    "semantic": {
+      "enabled": true,
+      "model": "deepseek-flash",
+      "batchSize": 6,
+      "maxJdChars": 1800
+    },
+    "fitProfile": {
+      "targetTags": ["大模型", "AI Infra"],
+      "strongKeywords": ["多模态", "visual token", "模型压缩", "量化", "强化学习", "vllm", "sglang", "推理优化"],
+      "niceKeywords": ["pytorch", "分布式训练", "模型部署", "agent", "评测"],
+      "negativeKeywords": ["销售", "客服", "标注", "审核"],
+      "preferCity": "成都",
+      "minimumMonths": 3,
+      "minimumDaysPerWeek": 3
+    },
+    "search": {
+      "enabled": true,
+      "mode": "shadow",
+      "countPerQuery": 10,
+      "maxQueries": 12,
+      "maxFetches": 16,
+      "minRerankScore": 1.5,
+      "minAuthority": 2,
+      "minConfidence": 0.55
+    },
     "doc": {
       "url": "https://acnpz73fogoq.feishu.cn/wiki/IDDkwLDmLiHnMeklHgecrFkgnnf",
       "maxPerSection": 0,

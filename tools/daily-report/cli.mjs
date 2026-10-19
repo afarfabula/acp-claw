@@ -8,8 +8,9 @@
  *                                                    → data/<date>-school.json + <date>-school.md
  *                                                    （默认只标「新增」并记录已读；--all 忽略已读且不回写，--no-detail 不抓正文）
  *   node cli.mjs jobs [--json] [--all] [--city 成都] [--keyword "大模型,推理"] [--publish] [--doc <url|id>]
- *                                                    采集实习岗位（默认只看成都 base，只保留大模型 / AI Infra 方向）
- *                                                    来源顺序：字节跳动 → 京东 → 阿里巴巴 → 腾讯 → 初创/其他
+ *                    [--search-mode shadow|augment] [--no-search] [--no-semantic]
+ *                                                    采集技术实习岗位（默认成都、技术岗、日薪≥200）
+ *                                                    官方源 + 实习僧 + DeepSeek Search/Fetch 增量发现
  *                                                    → data/<date>-jobs.json + <date>-jobs.md
  *                                                    （默认只标「新增」并记录已读；--all 忽略已读；
  *                                                     加 --publish 时把「还没写过的」新增岗位写进飞书文档的
@@ -722,12 +723,19 @@ async function cmdJobs(flags) {
     all: Boolean(flags.all),
     markSeen: !flags.all,
     city: typeof flags.city === 'string' ? flags.city : undefined,
+    log: (message) => process.stderr.write(`${message}\n`),
     keywords:
       typeof flags.keyword === 'string'
         ? String(flags.keyword)
             .split(',')
             .map((s) => s.trim())
             .filter(Boolean)
+        : undefined,
+    semantic: flags['no-semantic'] ? { enabled: false } : undefined,
+    search: flags['no-search']
+      ? { enabled: false }
+      : typeof flags['search-mode'] === 'string'
+        ? { enabled: true, mode: flags['search-mode'] }
         : undefined,
   });
   const parts = localParts(new Date(), cfg.timezone);
@@ -781,11 +789,15 @@ async function cmdJobs(flags) {
             cityUnknown: it.cityUnknown,
             type: it.type,
             tags: it.tags,
+            fitScore: it.fitScore,
+            fitReasons: it.fitReasons,
+            verification: it.verification,
             publishedAt: it.publishedAt,
             url: it.url,
           })),
           published,
           webDeployed,
+          intelligence: jobs.intelligence,
           notes: jobs.notes,
           failures,
         },

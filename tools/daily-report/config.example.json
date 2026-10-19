@@ -151,6 +151,45 @@
       { "name": "resume", "path": "/home_ext/quyanyi/tiger/resume" }
     ]
   },
+  "jobs": {
+    "enabled": true,
+    "city": "成都",
+    "cityCodes": { "成都": "CT_22" },
+    "technicalOnly": true,
+    "minDailySalary": 200,
+    "allowUnknownSalary": true,
+    "estimateUnknownSalary": true,
+    "maxPool": 1000,
+    "semantic": {
+      "enabled": true,
+      "model": "deepseek-flash",
+      "batchSize": 6,
+      "maxJdChars": 1800
+    },
+    "fitProfile": {
+      "targetTags": ["大模型", "AI Infra"],
+      "strongKeywords": [
+        "多模态", "视觉语言", "vlm", "视频理解", "visual token", "token reduction",
+        "模型压缩", "量化", "qat", "w4a4", "w3a3", "强化学习", "grpo",
+        "vllm", "sglang", "kv cache", "推理优化", "cuda"
+      ],
+      "niceKeywords": ["pytorch", "transformers", "分布式训练", "模型部署", "agent", "评测"],
+      "negativeKeywords": ["销售", "客服", "标注", "审核", "内容治理", "市场推广"],
+      "preferCity": "成都",
+      "minimumMonths": 3,
+      "minimumDaysPerWeek": 3
+    },
+    "search": {
+      "enabled": true,
+      "mode": "shadow",
+      "countPerQuery": 10,
+      "maxQueries": 12,
+      "maxFetches": 16,
+      "minRerankScore": 1.5,
+      "minAuthority": 2,
+      "minConfidence": 0.55
+    }
+  },
   "feishu": {
     "docTitlePattern": "每日简报 {yyyy}-{MM}",
     "chatId": "oc_f240829ae038b9d3e423560ad62ec053"

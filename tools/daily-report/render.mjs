@@ -266,3 +266,90 @@ export function renderSchool(data, { timeZone = 'Asia/Shanghai' } = {}) {
 
   return out.join('\n');
 }
+
+/**
+ * 实习岗位素材（成都完整实习池，按方向打标签）
+ * data 形状见 jobs.mjs 的 collectJobs()：{ stamp, city, keywords, companies, items, newItems, summary, notes, failures }
+ */
+export function renderJobs(data, { timeZone = 'Asia/Shanghai' } = {}) {
+  const out = [];
+  const s = data.summary ?? {};
+  out.push(`# 实习岗位素材 ${data.stamp ?? ''}（${timeZone}）`);
+  const filterText = [
+    data.filters?.technicalOnly !== false ? '仅技术岗' : '',
+    Number(data.filters?.minDailySalary ?? 0) > 0 ? `日薪≥${data.filters.minDailySalary}` : '',
+    data.filters?.estimateUnknownSalary !== false
+      ? '官网未披露薪资标参考'
+      : data.filters?.allowUnknownSalary !== false ? '薪资未知先保留' : '',
+  ].filter(Boolean).join(' · ');
+  out.push(
+    `城市：**${data.city ?? ''}** ｜ ${filterText ? `${filterText} ｜ ` : ''}${s.total ?? 0} 个岗位 ｜ **新增 ${s.newCount ?? 0} 个**`,
+  );
+  out.push(`发现词：${(data.keywords ?? []).join('、')}（方向在采集后打标签，不淘汰岗位）`);
+  if (data.failures?.length) out.push(`\n> 失败项：${data.failures.join(' | ')}`);
+  if (data.notes?.length) for (const n of data.notes) out.push(`> 备注：${n}`);
+
+  const newItems = data.newItems ?? [];
+  const items = data.items ?? [];
+
+  if (newItems.length) {
+    out.push('\n## 🆕 新增岗位速览\n');
+    out.push('| 公司 | 岗位 | 匹配 | 薪资 | 城市 | 类型 | 更新 | 链接 |');
+    out.push('|---|---|---|---|---|---|---|---|');
+    for (const it of newItems) {
+      const city = it.cityUnknown ? '未标注' : it.city || '—';
+      const salary = it.salary ? `${it.salary}${it.salarySource === 'benchmark' ? '（参考）' : ''}` : '—';
+      out.push(
+        `| ${it.company} | ${it.title} | ${it.fitScore ?? '—'} | ${salary} | ${city} | ` +
+          `${it.type || '—'} | ${it.publishedAt || '—'} | [详情](${it.url}) |`,
+      );
+    }
+  } else {
+    out.push('\n**本期没有新增岗位**（窗口内岗位此前都报过；用 `--all` 可以看全量）');
+  }
+
+  const order = (data.companies ?? []).map((c) => c.key);
+  const bucket = new Map();
+  for (const it of items) {
+    if (!bucket.has(it.companyKey)) bucket.set(it.companyKey, []);
+    bucket.get(it.companyKey).push(it);
+  }
+
+  for (const c of data.companies ?? []) {
+    const list = bucket.get(c.key) ?? [];
+    if (!list.length) {
+      out.push(`\n## ${c.name}（0 个命中）`);
+      continue;
+    }
+    out.push(`\n## ${c.name}（${list.length} 个，新增 ${list.filter((it) => newItems.includes(it)).length}）`);
+    for (const it of list) {
+      const flag = newItems.includes(it) ? '🆕 ' : '';
+      const city = it.cityUnknown ? '城市未标注' : it.city || '城市未知';
+      const tags = (it.tags ?? []).length ? (it.tags ?? []).join('/') : '方向待定';
+      out.push(`\n- ${flag}${(it.emojis ?? []).join('')} **${it.title}**`);
+      out.push(
+        `  - ${it.company} ｜ ${city} ｜ ${it.type || '类型未知'} ｜ ${tags}` +
+          (it.fitScore != null ? ` ｜ 匹配 ${it.fitScore}/100` : '') +
+          (it.salary
+            ? ` ｜ ${it.salary}${it.salarySource === 'benchmark' ? '（参考区间）' : ''}`
+            : '') +
+          (it.publishedAt ? ` ｜ 更新 ${it.publishedAt}` : ''),
+      );
+      if (it.fitReasons?.length) out.push(`  - 匹配理由：${it.fitReasons.slice(0, 3).join('；')}`);
+      if (it.department) out.push(`  - 部门/项目：${it.department}`);
+      out.push(
+        `  - 链接：${it.url}（来源：${it.source}` +
+          `${it.verification === 'deepseek-fetch' ? ' · DeepSeek Fetch 已核验' : ''}）`,
+      );
+      if (it.jd) out.push(`  - JD：${it.jd}`);
+      if (it.requirement) out.push(`  - 要求：${it.requirement}`);
+    }
+  }
+
+  const unmatchedOrder = [...bucket.keys()].filter((k) => !order.includes(k));
+  if (unmatchedOrder.length) {
+    out.push(`\n> 未归类的公司：${unmatchedOrder.join('、')}`);
+  }
+
+  return out.join('\n');
+}

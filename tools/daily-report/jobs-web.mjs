@@ -15,7 +15,10 @@ const esc = (s) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-const fmtDate = (s) => (s ? String(s).slice(0, 10) : '—');
+const jdPreview = (s, n = 230) => {
+  const t = String(s ?? '').replace(/\s+/g, ' ').trim();
+  return t.length > n ? `${t.slice(0, n)}…` : t;
+};
 
 /**
  * @param {object} jobs collectJobs 的返回（items / companies / newItems …）
@@ -24,6 +27,16 @@ const fmtDate = (s) => (s ? String(s).slice(0, 10) : '—');
  */
 export function renderJobsWeb(jobs, opts = {}) {
   const items = jobs.items ?? [];
+  const technicalOnly = jobs.filters?.technicalOnly !== false;
+  const minDailySalary = Number(jobs.filters?.minDailySalary ?? 200);
+  const allowUnknownSalary = jobs.filters?.allowUnknownSalary !== false;
+  const estimateUnknownSalary = jobs.filters?.estimateUnknownSalary !== false;
+  const salaryTitle = minDailySalary > 0
+    ? `日薪≥${minDailySalary}${estimateUnknownSalary ? '（官网未披露项标参考）' : allowUnknownSalary ? '（未知待核实）' : ''}`
+    : '';
+  const filterTitle = [technicalOnly ? '仅技术岗' : '', salaryTitle]
+    .filter(Boolean)
+    .join(' · ');
   const newIds = (jobs.newItems ?? []).map((it) => it.id).filter(Boolean);
   const newSet = new Set(newIds);
   const generatedAt = opts.generatedAt ?? new Date().toISOString();
@@ -35,37 +48,15 @@ export function renderJobsWeb(jobs, opts = {}) {
   const companyNames = {};
   for (const c of jobs.companies ?? []) companyNames[c.key] = c.name;
 
-  const cards = items
-    .map((it, i) => {
-      const city = it.cityUnknown ? '城市未标注' : it.city || '—';
-      const tags = (it.tags ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('');
-      const company = companyNames[it.companyKey] ?? it.company ?? '—';
-      const isNew = newSet.has(it.id);
-      return `
-    <article class="card" data-i="${i}">
-      <header class="card-h">
-        <span class="company">${esc(company)}${isNew ? '<span class="badge-new">新增</span>' : ''}</span>
-        <h3><a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)}</a></h3>
-      </header>
-      <div class="meta">
-        <span class="pill">📍 ${esc(city)}</span>
-        <span class="pill">${esc(it.type || '—')}</span>
-        ${it.publishedAt ? `<span class="pill">🕒 ${fmtDate(it.publishedAt)}</span>` : ''}
-        ${it.department ? `<span class="pill dept">${esc(it.department)}</span>` : ''}
-        ${it.salary ? `<span class="pill">💰 ${esc(it.salary)}</span>` : ''}
-      </div>
-      <div class="tags">${tags}</div>
-      ${it.jd ? `<p class="jd">${esc(it.jd)}</p>` : ''}
-      <footer class="card-f">
-        <span class="src">${esc(it.source || '')}</span>
-        <a class="go" href="${esc(it.url)}" target="_blank" rel="noopener">查看 →</a>
-      </footer>
-    </article>`;
-    })
-    .join('\n');
+  // 网页只带短 JD 摘要，避免把几百份完整 JD 塞进单页；完整内容仍留在 JSON 里
+  const webItems = items.map((it) => ({
+    ...it,
+    jd: jdPreview(it.jd),
+    requirement: jdPreview(it.requirement, 140),
+  }));
 
   const withLt = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
-  const itemsJson = withLt(items);
+  const itemsJson = withLt(webItems);
   const companyNamesJson = withLt(companyNames);
   const newIdsJson = withLt(newIds);
 
@@ -75,7 +66,8 @@ export function renderJobsWeb(jobs, opts = {}) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>实习机会 · 大模型 / AI Infra</title>
+<title>${esc(jobs.city || '成都')}技术实习机会</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
 <style>
   :root {
     --bg: #f5f6fb; --card: #fff; --ink: #1b1e28; --muted: #6b7280; --line: #e5e7f0;
@@ -110,8 +102,22 @@ export function renderJobsWeb(jobs, opts = {}) {
   .btn.ghost { color: var(--muted); }
   .btn .cnt { font-size: 11px; background: var(--new-soft); color: var(--new);
               border-radius: 999px; padding: 0 6px; margin-left: 4px; }
-  .facets { max-width: 1040px; margin: 0 auto; padding: 0 20px 10px;
-            display: flex; flex-direction: column; gap: 6px; }
+  .active-filters { display: none; max-width: 1040px; margin: 0 auto; padding: 2px 20px 8px;
+                    flex-wrap: wrap; gap: 6px; }
+  .active-filters.show { display: flex; }
+  .active-filter { border: 1px solid #cbd3ff; background: var(--brand-soft); color: var(--brand);
+                   border-radius: 999px; padding: 2px 9px; font-size: 12px; cursor: pointer; }
+  .active-filter b { margin-left: 5px; font-size: 13px; }
+  .facet-panel { display: none; max-height: min(52vh, 520px); overflow-y: auto;
+                 border-top: 1px solid var(--line); background: rgba(255,255,255,.98);
+                 box-shadow: 0 10px 24px rgba(20,30,80,.08); }
+  .facet-panel.open { display: block; }
+  .facet-head { max-width: 1040px; margin: 0 auto; padding: 10px 20px 2px;
+                display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+  .facet-head b { color: var(--ink); font-size: 13px; }
+  .facet-head .btn { margin-left: auto; padding: 4px 10px; }
+  .facets { max-width: 1040px; margin: 0 auto; padding: 4px 20px 14px;
+            display: flex; flex-direction: column; gap: 8px; }
   .facet { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .facet-label { font-size: 12px; color: var(--muted); min-width: 58px; }
   .chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px;
@@ -123,7 +129,7 @@ export function renderJobsWeb(jobs, opts = {}) {
   .chip.on b { color: rgba(255,255,255,.85); }
   .chip.off { opacity: .45; }
   main { max-width: 1040px; margin: 14px auto 60px; padding: 0 20px; }
-  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
           padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;
           transition: box-shadow .15s; }
@@ -139,19 +145,40 @@ export function renderJobsWeb(jobs, opts = {}) {
   .meta { display: flex; flex-wrap: wrap; gap: 6px; }
   .pill { background: var(--bg); border-radius: 6px; padding: 2px 8px; font-size: 11px; color: var(--muted); }
   .pill.dept { color: var(--ink); }
+  .pill.pending { background: #fff7e6; color: #a15c00; }
+  .pill.estimated { background: #eef2ff; color: #4052a8; }
+  .pill.match-high { background: #e8f7ef; color: #137a46; font-weight: 700; }
+  .pill.match-medium { background: #eef2ff; color: #4052a8; }
+  .match-line { font-size: 11.5px; color: #526079; line-height: 1.5; }
+  .match-line b { color: #26324a; }
+  .risk-line { font-size: 11.5px; color: #a15c00; line-height: 1.5; }
   .tags { display: flex; flex-wrap: wrap; gap: 4px; }
   .tag { background: var(--tag); color: var(--tag-ink); border-radius: 6px; padding: 2px 8px; font-size: 11px; }
-  .jd { margin: 0; color: #3b3f4c; font-size: 12.5px; max-height: 4.4em; overflow: hidden; }
+  .jd { margin: 0; color: #555b6b; font-size: 12.5px; line-height: 1.55;
+        display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+        overflow: hidden; overflow-wrap: anywhere; }
+  .jd-label { font-size: 11px; color: var(--muted); margin-right: 5px; }
   .card-f { margin-top: auto; display: flex; justify-content: space-between; align-items: center;
             padding-top: 6px; border-top: 1px dashed var(--line); }
   .src { font-size: 11px; color: var(--muted); }
   .go { color: var(--brand); text-decoration: none; font-size: 12.5px; font-weight: 600; }
   .empty { text-align: center; color: var(--muted); padding: 60px 0; }
+  .load-more { display: flex; justify-content: center; padding: 18px 0 4px; }
   footer.foot { text-align: center; color: var(--muted); font-size: 11.5px; padding: 20px 0 40px; }
+  #map-panel { display: none; margin: 14px 0 0; border: 1px solid var(--line); border-radius: 12px;
+               overflow: hidden; background: var(--card); }
+  #map-panel.open { display: block; }
+  #map { height: 440px; width: 100%; background: #e8ecf5; }
+  .map-bar { display: flex; justify-content: space-between; gap: 10px; align-items: center;
+             padding: 8px 14px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+  .map-popup b { font-size: 13px; }
+  .map-popup .mp-row { margin: 4px 0; font-size: 12px; color: #3b3f4c; }
+  .map-popup a { color: var(--brand); font-weight: 600; text-decoration: none; }
   @media (max-width: 720px) {
     .brand { width: 100%; }
     .search { width: 100%; }
     .facet-label { min-width: 100%; }
+    .facet-panel { max-height: 62vh; }
   }
 </style>
 </head>
@@ -159,27 +186,43 @@ export function renderJobsWeb(jobs, opts = {}) {
 <header class="top">
   <div class="top-in">
     <div class="brand">
-      <h1>实习机会 <small>大模型 / AI Infra</small></h1>
-      <div class="sub">更新于 ${esc(genLocal)} · 共 <b>${items.length}</b> 条 · 当前显示 <b id="shown">${items.length}</b> 条</div>
+      <h1>${esc(jobs.city || '成都')}技术实习机会 <small>${esc(filterTitle)}</small></h1>
+      <div class="sub">更新于 ${esc(genLocal)} · 共 <b>${items.length}</b> 条 · 匹配 <b id="shown">${items.length}</b> 条</div>
     </div>
     <div class="tools">
       <input class="search" id="q" placeholder="搜索岗位 / 公司 / 关键词 / JD…">
       <div class="seg" id="sort">
-        <button class="seg-btn active" data-sort="default">默认</button>
+        <button class="seg-btn active" data-sort="match">🎯 适合我</button>
         <button class="seg-btn" data-sort="newest">最新发布</button>
-        <button class="seg-btn" data-sort="chengdu">📍 成都优先</button>
+        <button class="seg-btn" data-sort="company">公司排序</button>
       </div>
+      <button class="btn" id="facet-toggle">筛选<span class="cnt" id="facet-cnt">0</span></button>
+      <button class="btn" id="map-toggle">🗺 地图</button>
+      <button class="btn" id="only-fit">🔥 高匹配<span class="cnt" id="fit-cnt">0</span></button>
       <button class="btn" id="only-new" hidden>✨ 只看新增<span class="cnt" id="new-cnt">0</span></button>
       <button class="btn ghost" id="reset">重置</button>
     </div>
   </div>
-  <div class="facets" id="facets"></div>
+  <div class="active-filters" id="active-filters"></div>
+  <div class="facet-panel" id="facet-panel">
+    <div class="facet-head">
+      <b>筛选条件</b><span>选择后自动收起</span>
+      <button class="btn ghost" id="facet-close">收起</button>
+    </div>
+    <div class="facets" id="facets"></div>
+  </div>
 </header>
 <main>
-  <div class="grid" id="grid">${cards}</div>
+  <div id="map-panel">
+    <div class="map-bar"><span id="map-info">地图</span><span>每个岗位一个点（按城市中心定位），点弹窗直达岗位</span></div>
+    <div id="map"></div>
+  </div>
+  <div class="grid" id="grid"></div>
+  <div class="load-more"><button class="btn" id="load-more" hidden>加载更多</button></div>
   <div class="empty" id="empty" style="display:none">没有匹配的岗位，试试放宽筛选条件</div>
 </main>
-<footer class="foot">数据源：字节 / 阿里 / 京东 / 腾讯校招官网 + 实习僧 · 由 daily-report 自动生成</footer>
+<footer class="foot">数据源：字节 / 阿里 / 京东 / 腾讯校招官网 + 实习僧 + DeepSeek 网页核验 · 由 daily-report 自动生成</footer>
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"><\/script>
 <script>
 (function () {
   var items = ${itemsJson};
@@ -197,10 +240,13 @@ export function renderJobsWeb(jobs, opts = {}) {
 
   var state = {
     q: '',
-    sort: 'default',
+    sort: 'match',
     onlyNew: false,
+    onlyFit: false,
+    limit: 36,
     sel: { company: new Set(), tags: new Set(), city: new Set(), type: new Set(), source: new Set() }
   };
+  var PAGE_SIZE = 36;
 
   function splitValues(v) {
     return String(v == null ? '' : v)
@@ -210,7 +256,7 @@ export function renderJobsWeb(jobs, opts = {}) {
   }
 
   function itemValues(it, key) {
-    if (key === 'company') return [companyNames[it.companyKey] || it.company || '未标注'];
+    if (key === 'company') return [it.company || companyNames[it.companyKey] || '未标注'];
     if (key === 'tags') {
       var ts = it.tags || [];
       return ts.length ? ts.slice() : ['未标注'];
@@ -255,6 +301,7 @@ export function renderJobsWeb(jobs, opts = {}) {
   // skipKey：忽略某一组自己的勾选（用于算该组的联动计数）
   function matches(i, skipKey) {
     if (state.onlyNew && !newSet.has(items[i].id)) return false;
+    if (state.onlyFit && Number(items[i].fitScore || 0) < 70) return false;
     if (state.q && HAY[i].indexOf(state.q) < 0) return false;
     for (var gi = 0; gi < GROUPS.length; gi++) {
       var g = GROUPS[gi];
@@ -285,11 +332,21 @@ export function renderJobsWeb(jobs, opts = {}) {
     return counts;
   }
 
-  function isChengdu(it) { return String(it.city || '').indexOf('成都') >= 0; }
-
   function sortIndexes(list) {
     var copy = list.slice();
-    if (state.sort === 'newest') {
+    if (state.sort === 'match') {
+      copy.sort(function (a, b) {
+        var fa = Number(items[a].fitScore || 0), fb = Number(items[b].fitScore || 0);
+        if (fa !== fb) return fb - fa;
+        var da = items[a].publishedAt || '', db = items[b].publishedAt || '';
+        if (da !== db) {
+          if (!da) return 1;
+          if (!db) return -1;
+          return da < db ? 1 : -1;
+        }
+        return a - b;
+      });
+    } else if (state.sort === 'newest') {
       copy.sort(function (a, b) {
         var da = items[a].publishedAt || '';
         var db = items[b].publishedAt || '';
@@ -298,9 +355,11 @@ export function renderJobsWeb(jobs, opts = {}) {
         if (!db) return -1;
         return da < db ? 1 : -1;
       });
-    } else if (state.sort === 'chengdu') {
+    } else if (state.sort === 'company') {
       copy.sort(function (a, b) {
-        return (isChengdu(items[a]) ? 0 : 1) - (isChengdu(items[b]) ? 0 : 1) || a - b;
+        var ca = items[a].company || companyNames[items[a].companyKey] || '';
+        var cb = items[b].company || companyNames[items[b].companyKey] || '';
+        return ca.localeCompare(cb, 'zh-CN') || a - b;
       });
     }
     return copy;
@@ -312,13 +371,208 @@ export function renderJobsWeb(jobs, opts = {}) {
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  function renderCard(it) {
+    var city = it.cityUnknown ? '城市未标注' : it.city || '—';
+    var company = it.company || companyNames[it.companyKey] || '—';
+    var isNew = newSet.has(it.id);
+    var tags = (it.tags || []).map(function (t) {
+      return '<span class="tag">' + escapeHtml(t) + '</span>';
+    }).join('');
+    var meta = '<span class="pill">📍 ' + escapeHtml(city) + '</span>' +
+      '<span class="pill">' + escapeHtml(it.type || '—') + '</span>';
+    if (it.fitScore != null) {
+      var fitClass = it.fitScore >= 70 ? ' match-high' : it.fitScore >= 45 ? ' match-medium' : '';
+      var fitTitle = (it.fitReasons || []).join('；');
+      meta += '<span class="pill' + fitClass + '" title="' + escapeHtml(fitTitle) + '">🎯 匹配 ' +
+        escapeHtml(String(it.fitScore)) + ' 分</span>';
+    }
+    if (it.publishedAt) meta += '<span class="pill">🕒 ' + escapeHtml(String(it.publishedAt).slice(0, 10)) + '</span>';
+    if (it.department) meta += '<span class="pill dept">' + escapeHtml(it.department) + '</span>';
+    if (it.salaryStatus === 'unknown') meta += '<span class="pill pending">💰 薪资待核实</span>';
+    else if (it.salary) {
+      var salaryNote = {
+        aggregate: ' · ' + (it.salaryEvidenceSource || '同岗位聚合'),
+        jd: ' · JD原文',
+        web: ' · 网页原文',
+        benchmark: ' · 参考',
+        source: ' · 官网'
+      }[it.salarySource] || '';
+      var salaryClass = it.salarySource === 'benchmark' ? ' estimated' : '';
+      var salaryTitle = it.salarySource === 'benchmark' && it.salaryEvidence
+        ? ' title="' + escapeHtml(it.salaryEvidence) + '"'
+        : '';
+      meta += '<span class="pill' + salaryClass + '"' + salaryTitle + '>💰 ' +
+        escapeHtml(it.salary + salaryNote) + '</span>';
+    }
+    var jd = it.jd
+      ? '<p class="jd"><span class="jd-label">JD</span>' + escapeHtml(it.jd) + '</p>'
+      : '';
+    var matchLine = (it.fitReasons || []).length
+      ? '<div class="match-line"><b>为什么适合：</b>' + escapeHtml((it.fitReasons || []).slice(0, 3).join(' · ')) + '</div>'
+      : '';
+    var riskLine = (it.fitRisks || []).length
+      ? '<div class="risk-line">注意：' + escapeHtml((it.fitRisks || []).slice(0, 2).join(' · ')) + '</div>'
+      : '';
+    var verifyLine = it.verification === 'deepseek-fetch'
+      ? ' · DeepSeek Fetch 已核验'
+      : it.verification === 'aggregate' ? ' · 聚合源' : '';
+    return '<article class="card">' +
+      '<header class="card-h"><span class="company">' + escapeHtml(company) +
+      (isNew ? '<span class="badge-new">新增</span>' : '') + '</span>' +
+      '<h3><a href="' + escapeHtml(it.url || '#') + '" target="_blank" rel="noopener">' +
+      escapeHtml(it.title || '未命名岗位') + '</a></h3></header>' +
+      '<div class="meta">' + meta + '</div>' +
+      '<div class="tags">' + tags + '</div>' + matchLine + riskLine + jd +
+      '<footer class="card-f"><span class="src">' + escapeHtml((it.source || '') + verifyLine) + '</span>' +
+      '<a class="go" href="' + escapeHtml(it.url || '#') + '" target="_blank" rel="noopener">完整 JD / 投递 →</a>' +
+      '</footer></article>';
+  }
+
   var grid = document.getElementById('grid');
-  var cardEls = Array.prototype.slice.call(grid.children);
   var facetsEl = document.getElementById('facets');
   var qEl = document.getElementById('q');
   var shownEl = document.getElementById('shown');
   var emptyEl = document.getElementById('empty');
   var sortEl = document.getElementById('sort');
+  var loadMoreEl = document.getElementById('load-more');
+  var facetToggleEl = document.getElementById('facet-toggle');
+  var facetPanelEl = document.getElementById('facet-panel');
+  var facetCntEl = document.getElementById('facet-cnt');
+  var activeFiltersEl = document.getElementById('active-filters');
+  var facetsOpen = false;
+
+  // ---------- 地图（Leaflet + 高德栅格瓦片） ----------
+  var CITY_COORDS = {
+    '北京': [39.9042, 116.4074], '上海': [31.2304, 121.4737], '广州': [23.1291, 113.2644],
+    '深圳': [22.5431, 114.0579], '成都': [30.5728, 104.0668], '杭州': [30.2741, 120.1551],
+    '南京': [32.0603, 118.7969], '武汉': [30.5928, 114.3055], '西安': [34.3416, 108.9398],
+    '苏州': [31.2989, 120.5853], '长沙': [28.2282, 112.9388], '合肥': [31.8206, 117.2272],
+    '重庆': [29.5630, 106.5516], '天津': [39.0842, 117.2010], '青岛': [36.0671, 120.3826],
+    '厦门': [24.4798, 118.0894], '珠海': [22.2707, 113.5767], '无锡': [31.4912, 120.3119],
+    '东莞': [23.0207, 113.7518], '佛山': [23.0215, 113.1214], '郑州': [34.7466, 113.6254],
+    '济南': [36.6512, 117.1201], '宁波': [29.8683, 121.5440], '福州': [26.0745, 119.2965],
+    '大连': [38.9140, 121.6147], '沈阳': [41.8057, 123.4315], '昆明': [24.8801, 102.8329],
+    '贵阳': [26.6470, 106.6302], '南宁': [22.8170, 108.3669], '哈尔滨': [45.8038, 126.5349],
+    '长春': [43.8171, 125.3235], '石家庄': [38.0428, 114.5149], '太原': [37.8706, 112.5489],
+    '南昌': [28.6820, 115.8579], '温州': [27.9938, 120.6994], '嘉兴': [30.7522, 120.7555],
+    '常州': [31.8107, 119.9741], '泉州': [24.8741, 118.6757], '惠州': [23.1115, 114.4162],
+    '中山': [22.5176, 113.3928], '兰州': [36.0611, 103.8343], '乌鲁木齐': [43.8256, 87.6168]
+  };
+
+  function cityOf(it, idx) {
+    if (it.cityUnknown) return null;
+    var parts = splitValues(it.city);
+    for (var pi = 0; pi < parts.length; pi++) {
+      var s = parts[pi];
+      for (var key in CITY_COORDS) {
+        if (s.indexOf(key) >= 0 || key.indexOf(s) >= 0) {
+          var c = CITY_COORDS[key];
+          // 确定性抖动：同一城市多个岗位散开，但不随筛选抖动
+          var j1 = (Math.sin(idx * 12.9898 + 1) * 43758.5453) % 1;
+          var j2 = (Math.sin(idx * 78.233 + 7) * 12543.123) % 1;
+          j1 = j1 - Math.floor(j1) - 0.5;
+          j2 = j2 - Math.floor(j2) - 0.5;
+          return [c[0] + j1 * 0.22, c[1] + j2 * 0.22, key];
+        }
+      }
+    }
+    return null;
+  }
+
+  var map = null, mapLayer = null, mapOpen = false;
+  var mapToggle = document.getElementById('map-toggle');
+  var mapPanel = document.getElementById('map-panel');
+
+  function ensureMap() {
+    if (map) return true;
+    if (!window.L) {
+      document.getElementById('map').innerHTML =
+        '<div style="padding:20px;color:#6b7280">地图组件加载失败（CDN 不可达），列表不受影响</div>';
+      return false;
+    }
+    map = L.map('map', { scrollWheelZoom: true });
+    L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+      subdomains: ['1', '2', '3', '4'], maxZoom: 18, attribution: '© 高德地图'
+    }).addTo(map);
+    mapLayer = L.layerGroup().addTo(map);
+    return true;
+  }
+
+  function updateMap(vis) {
+    if (!mapOpen || !map) return;
+    mapLayer.clearLayers();
+    var bounds = [];
+    var cities = {};
+    for (var vi = 0; vi < vis.length; vi++) {
+      var i = vis[vi];
+      var loc = cityOf(items[i], i);
+      if (!loc) continue;
+      var it = items[i];
+      var company = it.company || companyNames[it.companyKey] || '—';
+      var isNew = newSet.has(it.id);
+      var m = L.circleMarker([loc[0], loc[1]], {
+        radius: isNew ? 7 : 5,
+        color: isNew ? '#e5484d' : '#4f6ef7',
+        weight: 2, fillOpacity: .85
+      });
+      m.bindPopup(
+        '<div class="map-popup"><b>' + escapeHtml(company) + (isNew ? ' · 新增' : '') + '</b>' +
+        '<div class="mp-row">' + escapeHtml(it.title || '') + '</div>' +
+        '<div class="mp-row">📍 ' + escapeHtml(it.city || loc[2]) +
+        (it.type ? ' · ' + escapeHtml(it.type) : '') + '</div>' +
+        '<a href="' + escapeHtml(it.url || '#') + '" target="_blank" rel="noopener">查看岗位 →</a></div>'
+      );
+      m.addTo(mapLayer);
+      bounds.push([loc[0], loc[1]]);
+      cities[loc[2]] = (cities[loc[2]] || 0) + 1;
+    }
+    var info = document.getElementById('map-info');
+    if (info) {
+      var cityList = [];
+      for (var k in cities) cityList.push(k + ' ' + cities[k]);
+      info.textContent = '地图：' + bounds.length + ' 个定位点 · ' + (cityList.join(' / ') || '无可定位城市');
+    }
+    if (bounds.length) map.fitBounds(bounds, { padding: [40, 40], maxZoom: 11 });
+  }
+
+  if (mapToggle && mapPanel) {
+    mapToggle.addEventListener('click', function () {
+      mapOpen = !mapOpen;
+      mapPanel.classList.toggle('open', mapOpen);
+      mapToggle.classList.toggle('active', mapOpen);
+      if (mapOpen && ensureMap()) {
+        setTimeout(function () {
+          map.invalidateSize();
+          updateMap(window.__lastVis || []);
+        }, 60);
+      }
+    });
+  }
+
+  function setFacetsOpen(open) {
+    facetsOpen = Boolean(open);
+    facetPanelEl.classList.toggle('open', facetsOpen);
+    facetToggleEl.classList.toggle('active', facetsOpen);
+    if (facetsOpen) renderFacets();
+  }
+
+  function renderActiveFilters() {
+    if (!activeFiltersEl) return;
+    var html = '';
+    var count = 0;
+    for (var gi = 0; gi < GROUPS.length; gi++) {
+      var group = GROUPS[gi];
+      state.sel[group.key].forEach(function (v) {
+        count++;
+        html += '<button type="button" class="active-filter" data-g="' + escapeHtml(group.key) +
+          '" data-v="' + escapeHtml(v) + '">' + escapeHtml(group.label.replace(/^\S+\s*/, '')) +
+          '：' + escapeHtml(v) + '<b>×</b></button>';
+      });
+    }
+    activeFiltersEl.innerHTML = html;
+    activeFiltersEl.classList.toggle('show', Boolean(html));
+    if (facetCntEl) facetCntEl.textContent = String(count);
+  }
 
   function renderFacets() {
     var html = '';
@@ -354,16 +608,18 @@ export function renderJobsWeb(jobs, opts = {}) {
 
   function render() {
     var vis = sortIndexes(visibleIndexes());
-    var shown = new Set(vis);
-    for (var i = 0; i < cardEls.length; i++) {
-      cardEls[i].style.display = shown.has(i) ? '' : 'none';
-    }
-    var frag = document.createDocumentFragment();
-    for (var vi = 0; vi < vis.length; vi++) frag.appendChild(cardEls[vis[vi]]);
-    grid.appendChild(frag);
+    var shown = vis.slice(0, state.limit);
+    grid.innerHTML = shown.map(function (i) { return renderCard(items[i]); }).join('');
     if (shownEl) shownEl.textContent = String(vis.length);
     if (emptyEl) emptyEl.style.display = vis.length ? 'none' : 'block';
-    renderFacets();
+    if (loadMoreEl) {
+      loadMoreEl.hidden = shown.length >= vis.length;
+      loadMoreEl.textContent = '加载更多（' + shown.length + ' / ' + vis.length + '）';
+    }
+    renderActiveFilters();
+    if (facetsOpen) renderFacets();
+    window.__lastVis = vis;
+    updateMap(vis);
   }
 
   facetsEl.addEventListener('click', function (e) {
@@ -375,6 +631,28 @@ export function renderJobsWeb(jobs, opts = {}) {
     var sel = state.sel[g];
     if (!sel) return;
     if (sel.has(v)) sel.delete(v); else sel.add(v);
+    state.limit = PAGE_SIZE;
+    setFacetsOpen(false);
+    render();
+  });
+
+  facetToggleEl.addEventListener('click', function () {
+    setFacetsOpen(!facetsOpen);
+  });
+
+  document.getElementById('facet-close').addEventListener('click', function () {
+    setFacetsOpen(false);
+  });
+
+  activeFiltersEl.addEventListener('click', function (e) {
+    var el = e.target;
+    while (el && el !== activeFiltersEl && !(el.getAttribute && el.getAttribute('data-g'))) el = el.parentElement;
+    if (!el || el === activeFiltersEl || !el.getAttribute) return;
+    var g = el.getAttribute('data-g');
+    var v = el.getAttribute('data-v');
+    if (!state.sel[g]) return;
+    state.sel[g].delete(v);
+    state.limit = PAGE_SIZE;
     render();
   });
 
@@ -382,7 +660,8 @@ export function renderJobsWeb(jobs, opts = {}) {
     var el = e.target;
     while (el && el !== sortEl && !(el.getAttribute && el.getAttribute('data-sort'))) el = el.parentElement;
     if (!el || el === sortEl || !el.getAttribute) return;
-    state.sort = el.getAttribute('data-sort') || 'default';
+    state.sort = el.getAttribute('data-sort') || 'match';
+    state.limit = PAGE_SIZE;
     var btns = sortEl.querySelectorAll('.seg-btn');
     for (var i = 0; i < btns.length; i++) btns[i].classList.toggle('active', btns[i] === el);
     render();
@@ -390,6 +669,7 @@ export function renderJobsWeb(jobs, opts = {}) {
 
   qEl.addEventListener('input', function () {
     state.q = qEl.value.trim().toLowerCase();
+    state.limit = PAGE_SIZE;
     render();
   });
 
@@ -401,6 +681,20 @@ export function renderJobsWeb(jobs, opts = {}) {
     onlyNewEl.addEventListener('click', function () {
       state.onlyNew = !state.onlyNew;
       onlyNewEl.classList.toggle('active', state.onlyNew);
+      state.limit = PAGE_SIZE;
+      render();
+    });
+  }
+
+  var onlyFitEl = document.getElementById('only-fit');
+  var fitCntEl = document.getElementById('fit-cnt');
+  var highFitCount = items.filter(function (it) { return Number(it.fitScore || 0) >= 70; }).length;
+  if (onlyFitEl && highFitCount) {
+    if (fitCntEl) fitCntEl.textContent = String(highFitCount);
+    onlyFitEl.addEventListener('click', function () {
+      state.onlyFit = !state.onlyFit;
+      onlyFitEl.classList.toggle('active', state.onlyFit);
+      state.limit = PAGE_SIZE;
       render();
     });
   }
@@ -411,12 +705,21 @@ export function renderJobsWeb(jobs, opts = {}) {
     qEl.value = '';
     state.onlyNew = false;
     if (onlyNewEl) onlyNewEl.classList.remove('active');
-    state.sort = 'default';
+    state.onlyFit = false;
+    if (onlyFitEl) onlyFitEl.classList.remove('active');
+    state.sort = 'match';
     var btns = sortEl.querySelectorAll('.seg-btn');
     for (var i = 0; i < btns.length; i++) {
-      btns[i].classList.toggle('active', btns[i].getAttribute('data-sort') === 'default');
+      btns[i].classList.toggle('active', btns[i].getAttribute('data-sort') === 'match');
     }
     for (var gi = 0; gi < GROUPS.length; gi++) state.sel[GROUPS[gi].key].clear();
+    state.limit = PAGE_SIZE;
+    setFacetsOpen(false);
+    render();
+  });
+
+  if (loadMoreEl) loadMoreEl.addEventListener('click', function () {
+    state.limit += PAGE_SIZE;
     render();
   });
 
