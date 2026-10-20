@@ -4,7 +4,7 @@
   "description": "给「每天固定时间让大模型写一份日报」这类需求做的采集+投递工具，配合 acp-claw 的 cron 任务使用：",
   "main": "index.js",
   "scripts": {
-    "test": "node test-jobs-salary.mjs && node test-jobs-intelligence.mjs"
+    "test": "node test-jobs-salary.mjs && node test-jobs-intelligence.mjs && node test-jobs-official.mjs"
   },
   "keywords": [],
   "author": "",

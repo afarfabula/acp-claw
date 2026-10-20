@@ -781,6 +781,7 @@ async function cmdJobs(flags) {
           briefPath,
           summary: jobs.summary,
           companies: jobs.companies,
+          officialSources: jobs.officialSources,
           newItems: jobs.newItems.map((it) => ({
             id: it.id,
             company: it.company,

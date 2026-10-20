@@ -47,6 +47,7 @@ export function renderJobsWeb(jobs, opts = {}) {
 
   const companyNames = {};
   for (const c of jobs.companies ?? []) companyNames[c.key] = c.name;
+  const officialSources = jobs.officialSources ?? [];
 
   // 网页只带短 JD 摘要，避免把几百份完整 JD 塞进单页；完整内容仍留在 JSON 里
   const webItems = items.map((it) => ({
@@ -86,6 +87,13 @@ export function renderJobsWeb(jobs, opts = {}) {
   h1 small { color: var(--muted); font-weight: normal; font-size: 12px; margin-left: 6px; }
   .sub { font-size: 12px; color: var(--muted); }
   .sub b { color: var(--ink); }
+  .source-health { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+  .source-health a {
+    border-radius: 999px; padding: 1px 7px; font-size: 10.5px; line-height: 1.6;
+    text-decoration: none; border: 1px solid #dbe7df; color: #256b45; background: #f0faf4;
+  }
+  .source-health .empty-source { color: var(--muted); background: #f4f5f8; border-color: var(--line); }
+  .source-health .error-source { color: #a3292d; background: #fff1f1; border-color: #ffd4d4; }
   .tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .search { width: 260px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px;
             font-size: 14px; background: var(--card); }
@@ -188,6 +196,20 @@ export function renderJobsWeb(jobs, opts = {}) {
     <div class="brand">
       <h1>${esc(jobs.city || '成都')}技术实习机会 <small>${esc(filterTitle)}</small></h1>
       <div class="sub">更新于 ${esc(genLocal)} · 共 <b>${items.length}</b> 条 · 匹配 <b id="shown">${items.length}</b> 条</div>
+      <div class="source-health">${officialSources.map((source) => {
+        const detail = source.status === 'error'
+          ? `${source.name}官网异常`
+          : source.included > 0
+            ? `${source.name}官网 ${source.included}`
+            : `${source.name}官网 0（${jobs.city || '目标城市'}暂无）`;
+        const title = source.status === 'error'
+          ? source.error
+          : `官网实习池 ${source.fetched ?? '—'} 条，${jobs.city || '目标城市'}匹配 ${source.cityMatched ?? 0} 条，最终展示 ${source.included}`;
+        const cls = source.status === 'error'
+          ? ' class="error-source"'
+          : source.included > 0 ? '' : ' class="empty-source"';
+        return `<a${cls} href="${esc(source.siteUrl || '#')}" target="_blank" rel="noopener" title="${esc(title)}">${esc(detail)}</a>`;
+      }).join('')}</div>
     </div>
     <div class="tools">
       <input class="search" id="q" placeholder="搜索岗位 / 公司 / 关键词 / JD…">
@@ -221,7 +243,7 @@ export function renderJobsWeb(jobs, opts = {}) {
   <div class="load-more"><button class="btn" id="load-more" hidden>加载更多</button></div>
   <div class="empty" id="empty" style="display:none">没有匹配的岗位，试试放宽筛选条件</div>
 </main>
-<footer class="foot">数据源：字节 / 阿里 / 京东 / 腾讯校招官网 + 实习僧 + DeepSeek 网页核验 · 由 daily-report 自动生成</footer>
+<footer class="foot">字节 / 阿里 / 京东 / 腾讯岗位仅采官网；其他公司来自实习僧与 DeepSeek 网页核验 · 由 daily-report 自动生成</footer>
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"><\/script>
 <script>
 (function () {

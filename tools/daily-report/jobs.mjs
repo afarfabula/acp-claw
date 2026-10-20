@@ -135,6 +135,17 @@ export const DEFAULT_COMPANIES = [
   { key: 'baidu', name: '百度', enabled: false },
 ];
 
+/** 大厂岗位只认官网直采，聚合站同公司记录不再混入这些公司标签。 */
+export const OFFICIAL_ONLY_COMPANIES = new Set(['bytedance', 'jd', 'alibaba', 'tencent', 'baidu']);
+
+export const OFFICIAL_SOURCE_SITES = {
+  bytedance: 'https://jobs.bytedance.com/campus/position',
+  jd: 'https://campus.jd.com/#/jobs?type=internship',
+  alibaba: 'https://campus-talent.alibaba.com/campus/position',
+  tencent: 'https://careers.tencent.com/search.html?query=1&keyword=&attribute=3%2C3',
+  baidu: 'https://talent.baidu.com/jobs/list',
+};
+
 // ------------------------------------------------------------------ 基础请求
 
 async function request(url, { method = 'GET', headers = {}, body, timeoutMs = 25000 } = {}) {
@@ -602,44 +613,45 @@ async function fetchTencent(keywords, { city, timeoutMs, maxPerQuery = 100, maxI
 
 // ------------------------------------------------------------------ 京东（官方）
 
-async function fetchJd({ city, timeoutMs, maxItems = 1000 } = {}) {
-  const url = 'https://campus.jd.com/api/wx/position/recommendPage';
-  const json = await getJSON(url, {
-    method: 'POST',
-    timeoutMs,
-    headers: { 'content-type': 'application/json', referer: 'https://campus.jd.com/' },
-    body: JSON.stringify({
-      pageSize: 1000,
-      pageIndex: 0,
-      parameter: { planIdList: null, recommendChannelPositionVoList: [{ deptCode: '' }] },
-    }),
-  });
-  const all = [];
-  for (const group of json?.body ?? []) {
-    for (const ch of group?.channelPositionVoList ?? []) all.push(ch);
+/** 从京东校招官网 `/position/page?type=internship` 的结构化结果生成岗位。 */
+export function parseJdInternResponse(json, { maxItems = 1000 } = {}) {
+  // 新接口是 { body: { totalNumber, items } }；兼容旧 recommendPage 的
+  // { body: [{ channelPositionVoList: [...] }] }，避免官网小改版后整源丢失。
+  const rawItems = [];
+  if (Array.isArray(json?.body?.items)) {
+    rawItems.push(...json.body.items);
   }
+  for (const group of Array.isArray(json?.body) ? json.body : []) {
+    for (const ch of group?.channelPositionVoList ?? []) rawItems.push(ch);
+  }
+
+  const seen = new Set();
   const out = [];
-  for (const p of all) {
+  for (const p of rawItems) {
+    const id = p?.publishId;
+    if (!id || seen.has(String(id))) continue;
+    seen.add(String(id));
+
     const dir = cleanText(p.jobDirection);
-    // 只看实习（京东把实习岗位标在 jobDirection / planName 里，例如 TGT实习生）
-    const isIntern = /实习/.test(dir) || /实习/.test(cleanText(p.planName));
+    // 新接口 type=internship 已经是实习池；旧接口仍靠方向/项目名识别。
+    const isIntern = Array.isArray(json?.body?.items)
+      || /实习/.test(dir)
+      || /实习/.test(cleanText(p.planName));
     if (!isIntern) continue;
-    // 城市在 requirementVoList[].workCity（如"重庆市-重庆市"、"山东省-济南市"），去重拼接
-    const cities = [...new Set((p.requirementVoList ?? []).map((r) => cleanText(r.workCity)).filter(Boolean))];
-    const cityStr = cities.map((c) => c.replace(/^.*?-/, '')).join('/');
-    // 京东接口会返回全国岗位；必须在截断 maxItems 前按目标城市过滤，
-    // 否则北京岗位会占满结果池，成都岗位永远轮不到。
-    if (city && (!cityStr || !cityStr.includes(city))) continue;
+
+    const cities = [...new Set(
+      (p.requirementVoList ?? []).map((r) => cleanText(r.workCity)).filter(Boolean),
+    )];
     out.push({
-      externalId: String(p.publishId),
+      externalId: String(id),
       title: cleanText(p.positionName),
       companyName: '京东',
-      city: cityStr,
-      cityUnknown: !cityStr,
+      city: cities.join('/'),
+      cityUnknown: !cities.length,
       salary: sourceSalary(p),
       type: '实习',
       department: dir,
-      url: `https://campus.jd.com/#/details?id=${p.publishId}`,
+      url: `https://campus.jd.com/#/details?id=${id}`,
       jd: fullText(p.workContent),
       requirement: fullText(p.qualification),
       publishedAt: p.publishTime ? new Date(p.publishTime).toISOString().slice(0, 10) : '',
@@ -647,7 +659,40 @@ async function fetchJd({ city, timeoutMs, maxItems = 1000 } = {}) {
     });
     if (out.length >= maxItems) break;
   }
-  return out;
+  return {
+    items: out,
+    total: Number(json?.body?.totalNumber ?? rawItems.length),
+  };
+}
+
+async function fetchJd({ timeoutMs, maxItems = 1000, meta } = {}) {
+  const url = 'https://campus.jd.com/api/wx/position/page?type=internship';
+  const json = await getJSON(url, {
+    method: 'POST',
+    timeoutMs,
+    headers: {
+      'content-type': 'application/json',
+      referer: 'https://campus.jd.com/#/jobs?type=internship',
+    },
+    body: JSON.stringify({
+      pageSize: 1000,
+      pageIndex: 0,
+      parameter: {
+        positionName: '',
+        planIdList: [],
+        jobDirectionCodeList: [],
+        workCityCodeList: [],
+        positionDeptList: [],
+      },
+    }),
+  });
+  const parsed = parseJdInternResponse(json, { maxItems });
+  if (meta) {
+    meta.fetched = parsed.items.length;
+    meta.apiTotal = parsed.total;
+    meta.transport = 'internship-page';
+  }
+  return parsed.items;
 }
 
 // ------------------------------------------------------------------ 百度（官方，可选）
@@ -866,7 +911,7 @@ export async function fetchAlibaba(keywords, { timeoutMs, maxItems = 25 } = {}) 
     for (const kw of keywords) {
       for (let currentPage = 1; currentPage <= 20 && out.length < maxItems; currentPage++) {
         const json = await alibabaApi(jar, '/position/search', {
-          searchKey: kw, pageSize: 20, currentPage, language: 'zh', batchId,
+          searchKey: kw, pageSize: 20, pageIndex: currentPage, language: 'zh', batchId,
         }, { timeoutMs });
         const rows = json?.content?.datas ?? [];
         if (!rows.length) break;
@@ -958,6 +1003,7 @@ export async function collectJobs(cfg, failures = [], opts = {}) {
   const notes = [];
   const progress = typeof opts.log === 'function' ? opts.log : () => {};
   const byCompany = new Map();
+  const officialHealth = {};
   const add = (key, items) => {
     if (!items?.length) return;
     byCompany.set(key, [...(byCompany.get(key) ?? []), ...items]);
@@ -968,6 +1014,10 @@ export async function collectJobs(cfg, failures = [], opts = {}) {
   // 1) 先抓成都的完整实习池：分页遍历搜索页，并在详情页补齐 JD
   let pool = [];
   const needPool = companies.some((c) => c.key === 'startup' || c.adapter === 'shixiseng');
+  const officialOnlyEnabled = new Set(
+    companies.filter((c) => OFFICIAL_ONLY_COMPANIES.has(c.key)).map((c) => c.key),
+  );
+  let aggregateOfficialSkipped = 0;
   if (needPool && conf.shixiseng !== false) {
     try {
       const result = await fetchShixisengPool(keywords, city, {
@@ -992,8 +1042,15 @@ export async function collectJobs(cfg, failures = [], opts = {}) {
     const enabled = new Set(companies.map((c) => c.key));
     for (const it of pool) {
       const matched = classifyCompany(it.companyName, patterns);
+      if (matched?.key && officialOnlyEnabled.has(matched.key)) {
+        aggregateOfficialSkipped++;
+        continue;
+      }
       const key = matched?.key && enabled.has(matched.key) ? matched.key : (enabled.has('startup') ? 'startup' : null);
       if (key) add(key, [it]);
+    }
+    if (aggregateOfficialSkipped) {
+      notes.push(`实习僧聚合：跳过 ${aggregateOfficialSkipped} 条大厂岗位（大厂只保留官网直采）`);
     }
   }
 
@@ -1011,15 +1068,25 @@ export async function collectJobs(cfg, failures = [], opts = {}) {
         continue;
       }
       if (key === 'tencent') {
-        add('tencent', await fetchTencent([''], { city, timeoutMs, maxItems: maxPool }));
+        const fetched = await fetchTencent([''], { timeoutMs, maxItems: maxPool });
+        const cityMatched = fetched.filter((it) => !city || String(it.city).includes(city));
+        officialHealth.tencent = { status: 'ok', fetched: fetched.length, cityMatched: cityMatched.length };
+        add('tencent', cityMatched);
         continue;
       }
       if (key === 'jd') {
-        add('jd', await fetchJd({ city, timeoutMs, maxItems: maxPool }));
+        const meta = {};
+        const fetched = await fetchJd({ timeoutMs, maxItems: maxPool, meta });
+        const cityMatched = fetched.filter((it) => !city || String(it.city).includes(city));
+        officialHealth.jd = { status: 'ok', ...meta, cityMatched: cityMatched.length };
+        add('jd', cityMatched);
         continue;
       }
       if (key === 'baidu') {
-        add('baidu', await fetchBaidu({ keywords: [''], city, timeoutMs }));
+        const fetched = await fetchBaidu({ keywords: [''], timeoutMs });
+        const cityMatched = fetched.filter((it) => !city || !it.city || String(it.city).includes(city));
+        officialHealth.baidu = { status: 'ok', fetched: fetched.length, cityMatched: cityMatched.length };
+        add('baidu', cityMatched);
         continue;
       }
       if (key === 'bytedance') {
@@ -1029,26 +1096,34 @@ export async function collectJobs(cfg, failures = [], opts = {}) {
             maxItems: maxPool,
             locationCodeList: cityCode ? [cityCode] : [],
           });
-          add('bytedance', items.filter((it) => !city || String(it.city).includes(city)));
+          const cityMatched = items.filter((it) => !city || String(it.city).includes(city));
+          officialHealth.bytedance = { status: 'ok', fetched: items.length, cityMatched: cityMatched.length };
+          add('bytedance', cityMatched);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          notes.push(`字节跳动官网接口不可用（${msg.slice(0, 60)}），保留实习僧聚合结果`);
+          officialHealth.bytedance = { status: 'error', error: msg };
+          notes.push(`字节跳动官网接口不可用（${msg.slice(0, 60)}），未使用聚合站替代`);
         }
         continue;
       }
       if (key === 'alibaba') {
         try {
           const items = await fetchAlibaba([''], { timeoutMs, maxItems: maxPool });
-          add('alibaba', items.filter((it) => !city || String(it.city).includes(city)));
+          const cityMatched = items.filter((it) => !city || String(it.city).includes(city));
+          officialHealth.alibaba = { status: 'ok', fetched: items.length, cityMatched: cityMatched.length };
+          add('alibaba', cityMatched);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          notes.push(`阿里官网接口不可用（${msg.slice(0, 60)}），保留实习僧聚合结果`);
+          officialHealth.alibaba = { status: 'error', error: msg };
+          notes.push(`阿里官网接口不可用（${msg.slice(0, 60)}），未使用聚合站替代`);
         }
         continue;
       }
       failures.push(`未知公司配置: ${key}`);
     } catch (err) {
-      failures.push(`${company.name ?? key}: ${err instanceof Error ? err.message : String(err)}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      officialHealth[key] = { status: 'error', error: msg };
+      failures.push(`${company.name ?? key}: ${msg}`);
     }
   }
 
@@ -1263,6 +1338,24 @@ export async function collectJobs(cfg, failures = [], opts = {}) {
       newCount: newItems.filter((it) => it.companyKey === c.key).length,
     })),
   };
+  const officialSources = companies
+    .filter((c) => OFFICIAL_ONLY_COMPANIES.has(c.key))
+    .map((c) => {
+      const health = officialHealth[c.key] ?? { status: 'unavailable' };
+      const includedItems = items.filter((it) => it.companyKey === c.key);
+      return {
+        key: c.key,
+        name: c.name ?? c.key,
+        siteUrl: OFFICIAL_SOURCE_SITES[c.key] ?? '',
+        source: includedItems[0]?.source ?? '',
+        status: health.status,
+        fetched: health.fetched ?? null,
+        apiTotal: health.apiTotal ?? null,
+        cityMatched: health.cityMatched ?? 0,
+        included: includedItems.length,
+        error: health.error ?? '',
+      };
+    });
 
   return {
     city,
@@ -1277,6 +1370,7 @@ export async function collectJobs(cfg, failures = [], opts = {}) {
     },
     directions,
     companies: summary.byCompany,
+    officialSources,
     items,
     newItems,
     summary,

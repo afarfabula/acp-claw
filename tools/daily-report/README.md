@@ -184,14 +184,16 @@ paperdoc --spec …        → validateSpec 校验 → renderWeeklyDoc 渲染 �
 | 来源 | 接口 | 说明 |
 | --- | --- | --- |
 | 字节跳动（校招） | `POST https://jobs.bytedance.com/api/v1/csrf/token` 拿令牌 → `POST /api/v1/search/job/posts`（`x-csrf-token` 头） | **只取实习**：`recruitment_id_list=["202","301"]`（前端 `P={1:"1",2:"201",3:"202,301"}` 的 type=3 映射）；2026-10-13 打通——此前直接 POST 会被边缘网关 405，必须先拿 CSRF |
-| 阿里巴巴（校招） | `GET https://campus-talent.alibaba.com/campus/position` 拿 SESSION+XSRF cookie → `POST /searchCondition/listBatch` 发现实习批次 → `POST /position/search`（`x-xsrf-token` 头、`batchId`=实习批次） | 实习岗位在**校园招聘站** campus-talent.alibaba.com（不是社招站 talent.alibaba.com）；批次分「日常实习 / 研究型实习」，按季节会换 ID，运行时自动发现、失败用兜底 ID |
-| 京东（校招） | `POST https://campus.jd.com/api/wx/position/recommendPage` | 直接拿到岗位 + `workContent`/`qualification`（JD 原文）；实习岗位的 `jobDirection` 里带「实习生」；城市取自 `requirementVoList[].workCity`，并按目标城市过滤 |
+| 阿里巴巴（校招） | `GET https://campus-talent.alibaba.com/campus/position` 拿 SESSION+XSRF cookie → `POST /searchCondition/listBatch` 发现实习批次 → `POST /position/search`（`x-xsrf-token` 头、分页字段是 `pageIndex`、`batchId`=实习批次） | 实习岗位在**校园招聘站** campus-talent.alibaba.com（不是社招站 talent.alibaba.com）；批次分「日常实习 / 研究型实习」，按季节会换 ID，运行时自动发现、失败用兜底 ID。旧代码误用 `currentPage` 会被官网忽略，导致只抓到每批次第一页 |
+| 京东（校招） | `POST https://campus.jd.com/api/wx/position/page?type=internship` | **实习生招聘专用入口**；响应 `body.items` 直接包含岗位 + `workContent`/`qualification`（JD 原文），城市取自 `requirementVoList[].workCity`。旧 `recommendPage` 只是推荐岗位，容易漏掉实习池 |
 | 腾讯 | `GET https://careers.tencent.com/tencentcareer/api/post/Query` | `attrId=3` 是「实习生招聘」；按 `LocationName` 过滤城市；带 `Responsibility`（JD）与官网详情链接 |
 | 百度（可选，默认关） | `POST https://talent.baidu.com/httservice/getPostListNew`（`recruitType=INTERN`） | 字段最全（`workPlace`/`workContent`/`serviceCondition`/`publishDate`） |
 | 实习僧（聚合主池） | `GET https://www.shixiseng.com/interns?keyword=…&city=成都&page=N` + 岗位详情页 | Nuxt SSR 分页遍历；列表负责发现岗位，详情页补齐干净的岗位名、公司、发布时间和完整 JD。列表页标题里的字体反爬字符会用详情页字段覆盖 |
 | DeepSeek 网页发现 | `POST https://api.deepseek.com/v1/tools/search` → `POST /v1/tools/fetch` | Search 按 query 找候选，Fetch 把页面转成 Markdown，再由 flash 核验公司/岗位/城市/实习/技术岗；`shadow` 模式只记录效果，不混入正式岗位池 |
 
 - 官方专用 API 是权威主源；网页发现只补长尾公司，不覆盖官方字段
+- 字节 / 阿里 / 京东 / 腾讯四家公司**只保留官网直采**；实习僧里同公司的记录会跳过，不再把聚合站链接挂到这些公司标签下
+- 页面顶部会逐家显示「官网 X」，`X` 是官网岗位再经过目标城市、技术岗、薪资规则后的最终展示数；官网正常但目标城市为 0 时会明确显示「0（暂无）」，接口异常会标红
 - 发现词在 `DEFAULT_DISCOVERY_KEYWORDS`，只负责扩大成都实习池，**不淘汰方向不匹配的岗位**
 - 方向采用「标题/部门加权 + JD 证据 + flash 结构化抽取」：同样出现“性能优化”，前端岗仍归软件开发，模型/Infra 岗才归 AI Infra
 - 跨来源去重先用 URL，再用同公司/城市的归一化标题相似度；官方 > 实习僧 > 网页发现，合并时保留更权威记录并回填缺失薪资
