@@ -513,6 +513,11 @@ async function captureOverleaf(projectId) {
         clone,
       ]);
       runGit(['config', 'core.fileMode', 'false'], { cwd: clone });
+      log(
+        `capture clone origin ${runGit(['remote', 'get-url', 'origin'], {
+          cwd: clone,
+        }).trim()}`,
+      );
       removeSynchronizedFiles(clone);
 
       const overleaf = new OverleafClient();
@@ -549,11 +554,18 @@ async function captureOverleaf(projectId) {
         ],
         { cwd: clone },
       );
+      const commit = runGit(['rev-parse', 'HEAD'], { cwd: clone }).trim();
       runGit(['push', 'origin', `HEAD:${project.branch}`, '--quiet'], {
         cwd: clone,
         env: { OVERLEAF_BRIDGE_SKIP_PUSH: '1' },
       });
-      log(`captured Overleaf changes for ${projectId}`);
+      const branchHead = runGit(
+        ['--git-dir', gitDir, 'rev-parse', project.branch],
+        {},
+      ).trim();
+      log(
+        `captured Overleaf changes for ${projectId} commit=${commit} branchHead=${branchHead}`,
+      );
       return true;
     } finally {
       rmSync(temp, { recursive: true, force: true });
