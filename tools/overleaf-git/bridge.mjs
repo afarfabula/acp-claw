@@ -503,6 +503,7 @@ async function captureOverleaf(projectId) {
     const clone = join(temp, 'clone');
     const zip = join(temp, 'project.zip');
     try {
+      log(`capture source gitDir=${gitDir} cwd=${process.cwd()}`);
       runGit([
         'clone',
         '--quiet',
