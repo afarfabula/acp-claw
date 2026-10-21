@@ -480,10 +480,18 @@ async function publishCommit(projectId, revision) {
   });
 }
 
-function removeAllExceptGit(directory) {
+function removeSynchronizedFiles(directory) {
   for (const entry of readdirSync(directory)) {
     if (entry === '.git') continue;
-    rmSync(join(directory, entry), { recursive: true, force: true });
+    const path = join(directory, entry);
+    if (statSync(path).isDirectory()) {
+      removeSynchronizedFiles(path);
+      if (readdirSync(path).length === 0) {
+        rmSync(path, { recursive: true, force: true });
+      }
+    } else if (!shouldIgnoreFile(path)) {
+      rmSync(path, { force: true });
+    }
   }
 }
 
@@ -504,7 +512,8 @@ async function captureOverleaf(projectId) {
         gitDir,
         clone,
       ]);
-      removeAllExceptGit(clone);
+      runGit(['config', 'core.fileMode', 'false'], { cwd: clone });
+      removeSynchronizedFiles(clone);
 
       const overleaf = new OverleafClient();
       await overleaf.login();
@@ -515,12 +524,15 @@ async function captureOverleaf(projectId) {
           rmSync(file.absolutePath, { force: true });
         }
       }
+      const snapshotFiles = walkFiles(clone).length;
+      log(`overleaf snapshot has ${snapshotFiles} synchronized files`);
       runGit(['add', '-A'], { cwd: clone });
       try {
         runGit(['diff', '--cached', '--quiet'], {
           cwd: clone,
           stdio: 'ignore',
         });
+        log(`no Overleaf changes for ${projectId}`);
         return false;
       } catch {
         // The staged diff is non-empty.
