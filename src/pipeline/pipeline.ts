@@ -75,6 +75,8 @@ export class PromptPipeline {
     // expectReplay=false（正常 prompt）：初始 true，消息直接通过
     let seenUserMessageEcho = !options?.expectReplay;
 
+    let flushTimer: ReturnType<typeof setTimeout> | undefined;
+
     // 独立发送队列 — 不阻塞 update 处理，按顺序并行发送
     let sendChain = Promise.resolve();
     const enqueueSend = (fn: () => void | Promise<void>) => {
@@ -86,6 +88,10 @@ export class PromptPipeline {
     };
 
     const flushText = () => {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = undefined;
+      }
       if (textBuffer.length > 0) {
         const chunk = textBuffer;
         textBuffer = '';
@@ -95,6 +101,17 @@ export class PromptPipeline {
           enqueueSend(() => callbacks.onText(chunk));
         }
       }
+    };
+
+    // 有的适配器不保证每条消息都带 lastChunk，若只在 lastChunk / 工具事件
+    // 才 flush，会出现「回复已经生成但一直没发出去」。这里加一个空闲兜底：
+    // 文本 2.5 秒没有新增就自动 flush 出去。
+    const scheduleIdleFlush = () => {
+      if (flushTimer) clearTimeout(flushTimer);
+      flushTimer = setTimeout(() => {
+        flushTimer = undefined;
+        flushText();
+      }, 2500);
     };
 
     const onUpdate = (update: SessionUpdate) => {
@@ -143,6 +160,7 @@ export class PromptPipeline {
 
         // type=partial: 追加累积
         textBuffer += update.content.text;
+        scheduleIdleFlush();
 
         // lastChunk 标记当前消息结束，flush 并重置
         if (update._meta?.lastChunk) {
@@ -195,8 +213,12 @@ export class PromptPipeline {
       }
     }
 
-    // Flush remaining text + 等待发送队列排空
-    flushText();
+      // Flush remaining text + 等待发送队列排空
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = undefined;
+      }
+      flushText();
     await sendChain;
 
     // Determine if reflexion is needed

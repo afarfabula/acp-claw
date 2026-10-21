@@ -50,6 +50,11 @@ export function docMarkdown(docRef) {
   return runDocCli(['md', docRef.url ?? docRef.id]);
 }
 
+/** 文档元信息（含 document_id；wiki 链接会解析成真实 docx id） */
+export function docMeta(docRef) {
+  return JSON.parse(runDocCli(['meta', docRef.url ?? docRef.id]));
+}
+
 /** 按文档顺序列出根块（含 type / text / children） */
 export function docBlocks(docRef) {
   return JSON.parse(runDocCli(['blocks', docRef.url ?? docRef.id, '--json']));

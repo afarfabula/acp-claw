@@ -3,33 +3,8 @@
 export { listAgents, resolveAgent } from './acp/agent-registry.js';
 export { AcpClient, type SessionUpdate } from './acp/client.js';
 export { buildPrompt, type ContentBlock } from './acp/prompt-builder.js';
-export { type Channel, type IncomingMessage } from './types/channel.js';
-export {
-  type OutgoingMessage,
-  type OutgoingMessageResult,
-  type MessageHandler,
-} from './types/messages.js';
-export {
-  type ControllerEvents,
-  type EventName,
-} from './types/events.js';
-export { EventBus } from './infra/event-bus.js';
-export { MessageBus } from './infra/message-bus.js';
-export {
-  buildInitialContext,
-  buildInitGuidance,
-} from './infra/context-builder.js';
-export {
-  PromptPipeline,
-  type PipelineCallbacks,
-  type PipelineResult,
-  PipelineState,
-} from './pipeline/pipeline.js';
-export { MessageDispatcher } from './dispatch/message-dispatcher.js';
 export { Controller } from './app/controller.js';
-export {
-  A2AServerChannel,
-} from './channel/a2a.js';
+export { A2AServerChannel } from './channel/a2a.js';
 export {
   FeishuChannel,
   type FeishuMessage,
@@ -40,8 +15,8 @@ export {
   type InjectSessionInfo,
 } from './channel/inject.js';
 export {
-  SchedulerChannel,
   type ScheduledTask,
+  SchedulerChannel,
 } from './channel/scheduler.js';
 export {
   type CommandContext,
@@ -61,6 +36,19 @@ export {
   resolveWorkDir,
   saveConfig,
 } from './config.js';
+export { MessageDispatcher } from './dispatch/message-dispatcher.js';
+export {
+  buildInitGuidance,
+  buildInitialContext,
+} from './infra/context-builder.js';
+export { EventBus } from './infra/event-bus.js';
+export { MessageBus } from './infra/message-bus.js';
+export {
+  type PipelineCallbacks,
+  type PipelineResult,
+  PipelineState,
+  PromptPipeline,
+} from './pipeline/pipeline.js';
 export { type ActiveSession, SessionManager } from './session/manager.js';
 export { getSessionKey } from './session/router.js';
 export {
@@ -68,3 +56,13 @@ export {
   type SessionRecord,
   SessionStore,
 } from './session/store.js';
+export type { Channel, IncomingMessage } from './types/channel.js';
+export type {
+  ControllerEvents,
+  EventName,
+} from './types/events.js';
+export type {
+  MessageHandler,
+  OutgoingMessage,
+  OutgoingMessageResult,
+} from './types/messages.js';

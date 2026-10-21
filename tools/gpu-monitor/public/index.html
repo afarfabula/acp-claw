@@ -187,6 +187,28 @@
       return `<div style="width:${Math.min(100, pct)}%;background:${color}"></div>`;
     }
 
+    // 提醒进度：按「同时空闲的卡数」判断，≥4 张连续 20 分钟才提醒
+    function progressLabel(latest) {
+      const g = latest.group ?? {};
+      const th = latest.thresholds ?? {};
+      const minCards = latest.minFreeCards ?? 4;
+      const freeMin = th.freeMinutes ?? 20;
+      const recMin = th.recoverMinutes ?? freeMin;
+      const parts = [
+        `采样时间 ${timeLabel(latest.ts)}`,
+        `空闲卡：${latest.freeNow.length ? latest.freeNow.join(', ') : '无'}（${latest.freeNow.length}/${latest.gpus.length}）`,
+        `规则：≥${minCards} 张空闲 ${freeMin} 分钟提醒 / 不足 ${minCards} 张 ${recMin} 分钟提醒`,
+      ];
+      if (g.notified) {
+        parts.push('已发出空闲提醒，等待被占用');
+      } else if (g.freeConsecutive > 0) {
+        parts.push(`空闲计时 ${g.freeConsecutive}/${th.consecutiveSamples}`);
+      } else if (g.busyConsecutive > 0) {
+        parts.push(`占用计时 ${g.busyConsecutive}/${th.recoverConsecutiveSamples}`);
+      }
+      return parts.join(' · ');
+    }
+
     function renderLatest() {
       const latest = state.latest;
       if (!latest) return;
@@ -198,9 +220,7 @@
         const memPct = g.memTotalMiB ? Math.min(100, (g.memUsedMiB / g.memTotalMiB) * 100) : 0;
         const status = freeIds.has(g.i)
           ? '<span class="badge free">空闲</span>'
-          : g.freeSamples > 0
-            ? `<span class="badge pending">候选中 (${g.freeSamples}/6)</span>`
-            : '<span class="badge busy">占用中</span>';
+          : '<span class="badge busy">占用中</span>';
         const tr = document.createElement('tr');
         tr.innerHTML =
           `<td><b>GPU ${g.i}</b></td>` +
@@ -210,8 +230,7 @@
           `<td>${status}</td>`;
         tbody.appendChild(tr);
       }
-      document.getElementById('status').textContent =
-        `采样时间 ${timeLabel(latest.ts)} · 空闲卡：${latest.freeNow.length ? latest.freeNow.join(', ') : '无'}`;
+      document.getElementById('status').textContent = progressLabel(latest);
     }
 
     function renderHistory(points) {

@@ -112,3 +112,11 @@ export function formatCny(value: number): string {
   if (abs >= 0.01) return `¥${v.toFixed(3)}`;
   return `¥${v.toFixed(4)}`;
 }
+
+/** token 数简写：1.2M / 57k / 996 */
+export function formatTokens(value: number): string {
+  const n = Number(value ?? 0);
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return String(Math.round(n));
+}

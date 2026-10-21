@@ -92,7 +92,9 @@ async function handleSession(
       return { text: t('session.no_active', lang, { key: ctx.sessionKey }) };
     }
     const status = getSessionStatus(session);
-    const statusLine = session.client ? '' : t('session.status_reconnecting', lang);
+    const statusLine = session.client
+      ? ''
+      : t('session.status_reconnecting', lang);
     return {
       text:
         [

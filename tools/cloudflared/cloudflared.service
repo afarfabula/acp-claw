@@ -1,0 +1,13 @@
+[Unit]
+Description=Cloudflare Tunnel (ACP Claw unified ingress)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/quyanyi/bin/cloudflared tunnel --config /home/quyanyi/.cloudflared/config.yml run 4f3d2630-c3c3-40d0-8587-229e8840132d
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -76,7 +76,21 @@ function printMatrix(latest) {
     console.log('暂无采样数据');
     return;
   }
-  console.log(`采样时间: ${hhmmss(latest.ts)}  空闲卡: ${latest.freeNow.length ? latest.freeNow.join(', ') : '无'}`);
+  const minCards = latest.minFreeCards ?? 4;
+  const group = latest.group ?? {};
+  const th = latest.thresholds ?? {};
+  let hint = '';
+  if (group.notified) {
+    hint = '  [已提醒空闲，等待被占用]';
+  } else if (group.freeConsecutive > 0) {
+    hint = `  [空闲计时 ${group.freeConsecutive}/${th.consecutiveSamples}]`;
+  } else if (group.busyConsecutive > 0) {
+    hint = `  [占用计时 ${group.busyConsecutive}/${th.recoverConsecutiveSamples}]`;
+  }
+  console.log(
+    `采样时间: ${hhmmss(latest.ts)}  空闲卡: ${latest.freeNow.length ? latest.freeNow.join(', ') : '无'} ` +
+      `(${latest.freeNow.length}/${latest.gpus.length}，阈值≥${minCards} 张)${hint}`,
+  );
   console.log('GPU   UTIL   MEM(GB)   TEMP   STATUS');
   for (const g of latest.gpus) {
     const free = g.free ? color('32', 'FREE ') : color('90', 'busy');

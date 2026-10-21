@@ -6,6 +6,7 @@
  *   node cli.mjs summary              今天 / 本月 / 全部 总览
  *   node cli.mjs daily [天数]         按日明细
  *   node cli.mjs sessions [条数]      花费最高的会话
+ *   node cli.mjs plan                 火山方舟 Coding Plan 额度（线上）
  *   node cli.mjs statusline           预览状态栏输出（用当前 Codex 会话）
  *   node cli.mjs install              安装 Stop hook（人民币状态栏）
  *   node cli.mjs uninstall            卸载 Stop hook
@@ -16,6 +17,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { hookStatus, installHook, uninstallHook } from './hooks.mjs';
+import { loadPlan, renderPlanReport, renderQuotaLine } from './plan.mjs';
 import {
   DEFAULT_MODEL,
   formatCny,
@@ -55,6 +57,9 @@ function usage() {
       '  sessions [条数]      花费最高的会话（默认 15 条）',
       '  today                今天明细',
       '  month                本月明细',
+      '  plan                 火山方舟 Coding Plan 额度快照（5小时 / 本周 / 本月，读线上）',
+      '  plan --json          直接输出 arkcli 的原始 JSON',
+      '  plan --all           展开全部 4 个套餐 SKU（诊断用）',
       '  price                当前时段单价（是否高峰）',
       '  statusline           预览状态栏输出',
       '  install              安装 Stop hook（人民币状态栏）',
@@ -62,6 +67,7 @@ function usage() {
       '  status               查看 hook 安装状态',
       '',
       `  数据源：${defaultCodexHome()}/sessions`,
+      '  套餐额度：本机 arkcli（arkcli usage plan --product coding-plan）',
       '',
     ].join('\n'),
   );
@@ -112,7 +118,30 @@ function printPrice() {
   );
 }
 
-function main() {
+async function printPlan(args) {
+  const json = args.includes('--json');
+  const all = args.includes('--all');
+  const plan = await loadPlan({
+    force: true,
+    all,
+    product: all ? undefined : 'coding-plan',
+  });
+  if (json) {
+    process.stdout.write(`${JSON.stringify(plan.raw ?? plan, null, 2)}\n`);
+    return;
+  }
+  if (!plan.ok) {
+    process.stdout.write(renderPlanReport(plan));
+    process.exitCode = 1;
+    return;
+  }
+  const quota = renderQuotaLine(plan);
+  process.stdout.write(
+    renderPlanReport(plan) + (quota ? `\n  ${quota}\n` : ''),
+  );
+}
+
+async function main() {
   const [command = 'summary', ...args] = process.argv.slice(2);
   const codexHome = defaultCodexHome();
   const now = new Date();
@@ -157,6 +186,10 @@ function main() {
     }
     case 'price':
       printPrice();
+      break;
+    case 'plan':
+    case 'quota':
+      await printPlan(args);
       break;
     case 'statusline':
       previewStatusline(codexHome);
@@ -212,4 +245,7 @@ function beijingDayOf(date) {
     .slice(0, 10);
 }
 
-main();
+main().catch((error) => {
+  process.stderr.write(`codex-cost 出错：${error?.message ?? error}\n`);
+  process.exitCode = 1;
+});

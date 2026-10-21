@@ -1,0 +1,17 @@
+tunnel: 4f3d2630-c3c3-40d0-8587-229e8840132d
+credentials-file: /home/quyanyi/.cloudflared/4f3d2630-c3c3-40d0-8587-229e8840132d.json
+
+ingress:
+  - hostname: home.afarfabula.org
+    service: http://localhost:8080
+  - hostname: code.afarfabula.org
+    service: http://localhost:8818
+  - hostname: 3090gpu.afarfabula.org
+    service: http://localhost:8808
+  - hostname: overleaf.afarfabula.org
+    service: http://localhost:51007
+  - hostname: resume.afarfabula.org
+    service: http://localhost:8820
+  - service: http_status:404
+
+no-autoupdate: true

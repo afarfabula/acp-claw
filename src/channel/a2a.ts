@@ -1,14 +1,17 @@
+import { randomUUID } from 'node:crypto';
 import {
   createServer,
-  type Server,
   type IncomingMessage as HttpIncomingMessage,
+  type Server,
   type ServerResponse,
 } from 'node:http';
-import { randomUUID } from 'node:crypto';
-
-import type { Channel, IncomingMessage } from '../types/channel.js';
 import type { A2AChannelConfig } from '../config.js';
-import type { MessageBus, OutgoingMessage, OutgoingMessageResult } from '../types/messages.js';
+import type { Channel, IncomingMessage } from '../types/channel.js';
+import type {
+  MessageBus,
+  OutgoingMessage,
+  OutgoingMessageResult,
+} from '../types/messages.js';
 
 interface A2AMessagePart {
   kind: 'text' | 'data' | 'file';
@@ -88,12 +91,18 @@ export class A2AServerChannel implements Channel {
     this.messageHandler = undefined;
     this.messageBus?.unsubscribe(this.name);
 
-    for (const [messageId, pending] of Array.from(this.pendingResponses.entries())) {
+    for (const [messageId, pending] of Array.from(
+      this.pendingResponses.entries(),
+    )) {
       if (pending.timeout) {
         clearTimeout(pending.timeout);
       }
       this.pendingResponses.delete(messageId);
-      try { pending.complete(); } catch { /* response may already be closed */ }
+      try {
+        pending.complete();
+      } catch {
+        /* response may already be closed */
+      }
     }
     this.taskToMessage.clear();
 
@@ -133,13 +142,17 @@ export class A2AServerChannel implements Channel {
   }
 
   completeResponseByContext(contextId: string): void {
-    for (const [messageId, pending] of Array.from(this.pendingResponses.entries())) {
+    for (const [messageId, pending] of Array.from(
+      this.pendingResponses.entries(),
+    )) {
       if (pending.contextId === contextId) {
         if (pending.timeout) {
           clearTimeout(pending.timeout);
         }
         this.pendingResponses.delete(messageId);
-        for (const [taskId, msgId] of Array.from(this.taskToMessage.entries())) {
+        for (const [taskId, msgId] of Array.from(
+          this.taskToMessage.entries(),
+        )) {
           if (msgId === messageId) {
             this.taskToMessage.delete(taskId);
             break;
@@ -274,7 +287,10 @@ export class A2AServerChannel implements Channel {
 
     if (fileParts.length > 0) {
       const fileInfo = fileParts
-        .map((f) => `[文件: ${f.uri || '(inline)'}${f.mimeType ? ` (${f.mimeType})` : ''}]`)
+        .map(
+          (f) =>
+            `[文件: ${f.uri || '(inline)'}${f.mimeType ? ` (${f.mimeType})` : ''}]`,
+        )
         .join('\n');
       content = content ? `${content}\n${fileInfo}` : fileInfo;
     }
@@ -459,7 +475,9 @@ export class A2AServerChannel implements Channel {
     res.end();
   }
 
-  private async handleOutgoing(msg: OutgoingMessage): Promise<OutgoingMessageResult> {
+  private async handleOutgoing(
+    msg: OutgoingMessage,
+  ): Promise<OutgoingMessageResult> {
     // Status-update forwarding (intermediate events or completion signal)
     if (msg.type === 'status-update') {
       // Completion signal → close SSE stream
@@ -489,14 +507,22 @@ export class A2AServerChannel implements Channel {
       if (msg.messageId && this.pendingResponses.has(msg.messageId)) {
         pending = this.pendingResponses.get(msg.messageId);
         for (const [tid, mid] of Array.from(this.taskToMessage.entries())) {
-          if (mid === msg.messageId) { taskId = tid; break; }
+          if (mid === msg.messageId) {
+            taskId = tid;
+            break;
+          }
         }
       } else if (msg.chatId) {
         for (const [mid, p] of Array.from(this.pendingResponses.entries())) {
           if (p.contextId === msg.chatId) {
             pending = p;
-            for (const [tid, mmid] of Array.from(this.taskToMessage.entries())) {
-              if (mmid === mid) { taskId = tid; break; }
+            for (const [tid, mmid] of Array.from(
+              this.taskToMessage.entries(),
+            )) {
+              if (mmid === mid) {
+                taskId = tid;
+                break;
+              }
             }
             break;
           }
@@ -504,7 +530,10 @@ export class A2AServerChannel implements Channel {
       }
 
       if (!pending) {
-        return { success: false, error: 'No matching pending A2A request for status-update' };
+        return {
+          success: false,
+          error: 'No matching pending A2A request for status-update',
+        };
       }
 
       pending.writeEvent({
@@ -535,7 +564,9 @@ export class A2AServerChannel implements Channel {
     }
 
     if (msg.chatId) {
-      for (const [messageId, pending] of Array.from(this.pendingResponses.entries())) {
+      for (const [messageId, pending] of Array.from(
+        this.pendingResponses.entries(),
+      )) {
         if (pending.contextId === msg.chatId) {
           pending.writeArtifact(msg.content);
           return { success: true, messageId };

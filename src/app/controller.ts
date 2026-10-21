@@ -79,9 +79,7 @@ export class Controller {
     }
     if (savedState?.chatBindings) {
       const now = Date.now();
-      for (const [chatId, binding] of Object.entries(
-        savedState.chatBindings,
-      )) {
+      for (const [chatId, binding] of Object.entries(savedState.chatBindings)) {
         if (binding?.sessionKey && binding.expiresAt > now) {
           this.chatBindings.set(chatId, binding);
         }
@@ -305,9 +303,10 @@ export class Controller {
 
       // 把目标群绑定到该会话，让群里的后续消息继续这个上下文
       if (raw?.bindChat && msg.chatId) {
-        const ttl = raw.keepSessionMs && raw.keepSessionMs > 0
-          ? raw.keepSessionMs
-          : 24 * 60 * 60 * 1000;
+        const ttl =
+          raw.keepSessionMs && raw.keepSessionMs > 0
+            ? raw.keepSessionMs
+            : 24 * 60 * 60 * 1000;
         this.chatBindings.set(msg.chatId, {
           sessionKey,
           expiresAt: Date.now() + ttl,

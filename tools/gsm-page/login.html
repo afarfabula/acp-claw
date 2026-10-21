@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>秘密花园</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: radial-gradient(circle at 30% 20%, #4a1a5e 0%, #1c0b33 55%, #0e0620 100%);
+      overflow: hidden;
+    }
+    .hearts {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .float-heart {
+      position: absolute;
+      bottom: -8vh;
+      color: rgba(255, 105, 180, 0.5);
+      animation: rise linear infinite;
+      user-select: none;
+    }
+    @keyframes rise {
+      from { transform: translateY(0) rotate(0deg); opacity: 0; }
+      10% { opacity: 0.7; }
+      to { transform: translateY(-108vh) rotate(20deg); opacity: 0; }
+    }
+    .card {
+      position: relative;
+      z-index: 1;
+      width: min(92vw, 400px);
+      padding: 44px 34px 40px;
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 160, 200, 0.25);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+      text-align: center;
+      animation: fadeUp 0.8s ease both;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(18px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .logo {
+      font-size: 52px;
+      animation: beat 1.2s ease-in-out infinite;
+      display: inline-block;
+      filter: drop-shadow(0 0 16px rgba(255, 80, 140, 0.8));
+    }
+    @keyframes beat {
+      0%, 100% { transform: scale(1); }
+      15% { transform: scale(1.18); }
+      30% { transform: scale(1.05); }
+      45% { transform: scale(1.15); }
+    }
+    h1 {
+      margin-top: 12px;
+      font-size: 22px;
+      color: #fff0f6;
+      letter-spacing: 2px;
+    }
+    p.tip {
+      margin: 12px 0 26px;
+      color: rgba(255, 220, 235, 0.65);
+      font-size: 13px;
+      letter-spacing: 1px;
+    }
+    input {
+      width: 100%;
+      padding: 13px 16px;
+      border: 1px solid rgba(255, 150, 190, 0.35);
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.25);
+      color: #ffe9f2;
+      font-size: 16px;
+      letter-spacing: 3px;
+      outline: none;
+      text-align: center;
+      transition: border-color 0.25s, box-shadow 0.25s;
+    }
+    input:focus {
+      border-color: #ff8ab8;
+      box-shadow: 0 0 0 3px rgba(255, 138, 184, 0.2);
+    }
+    input::placeholder { color: rgba(255, 220, 235, 0.35); letter-spacing: 1px; }
+    button {
+      width: 100%;
+      margin-top: 16px;
+      padding: 13px;
+      border: none;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #ff5f95, #ff2e7e);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 6px;
+      cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.25s;
+      box-shadow: 0 8px 24px rgba(255, 47, 126, 0.35);
+    }
+    button:hover { transform: translateY(-1px); box-shadow: 0 12px 30px rgba(255, 47, 126, 0.5); }
+    button:active { transform: scale(0.98); }
+    .error {
+      margin-top: 14px;
+      min-height: 18px;
+      color: #ffb0c4;
+      font-size: 13px;
+      opacity: 0;
+      transition: opacity 0.25s;
+    }
+    .error.show { opacity: 1; }
+    .card.shake { animation: shake 0.4s; }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-8px); }
+      40% { transform: translateX(8px); }
+      60% { transform: translateX(-5px); }
+      80% { transform: translateX(5px); }
+    }
+  </style>
+</head>
+<body>
+  <div class="hearts" id="hearts"></div>
+  <div class="card" id="card">
+    <span class="logo">❤</span>
+    <h1>JSM 的秘密花园</h1>
+    <p class="tip">这是一份只给重要的人看的礼物</p>
+    <input id="password" type="password" placeholder="输入暗号" autocomplete="off" />
+    <button id="enter">进入</button>
+    <div class="error" id="error"></div>
+  </div>
+
+  <script>
+    const card = document.getElementById('card');
+    const error = document.getElementById('error');
+    const passwordInput = document.getElementById('password');
+    const enterBtn = document.getElementById('enter');
+
+    function showError(text) {
+      error.textContent = text;
+      error.classList.add('show');
+      card.classList.remove('shake');
+      void card.offsetWidth;
+      card.classList.add('shake');
+    }
+
+    function spawnHeart() {
+      const heart = document.createElement('div');
+      heart.className = 'float-heart';
+      heart.textContent = ['❤', '♥', '💖', '💗'][Math.floor(Math.random() * 4)];
+      heart.style.left = Math.random() * 100 + 'vw';
+      heart.style.fontSize = 12 + Math.random() * 22 + 'px';
+      heart.style.animationDuration = 6 + Math.random() * 7 + 's';
+      document.getElementById('hearts').appendChild(heart);
+      setTimeout(() => heart.remove(), 13000);
+    }
+    setInterval(spawnHeart, 420);
+    for (let i = 0; i < 10; i++) setTimeout(spawnHeart, i * 200);
+
+    async function login() {
+      const password = passwordInput.value.trim();
+      if (!password) { showError('先把暗号输进来呀~'); return; }
+      enterBtn.disabled = true;
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.ok) {
+          location.href = '/';
+        } else {
+          showError(data.message || '密码不对哦，再想想暗号~');
+          passwordInput.value = '';
+          passwordInput.focus();
+        }
+      } catch {
+        showError('网络开了个小差，再试一次~');
+      } finally {
+        enterBtn.disabled = false;
+      }
+    }
+
+    enterBtn.addEventListener('click', login);
+    passwordInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') login();
+    });
+    passwordInput.focus();
+  </script>
+</body>
+</html>

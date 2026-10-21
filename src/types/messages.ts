@@ -20,4 +20,6 @@ export interface MessageBus {
   destroy(): void;
 }
 
-export type MessageHandler = (message: OutgoingMessage) => Promise<OutgoingMessageResult>;
+export type MessageHandler = (
+  message: OutgoingMessage,
+) => Promise<OutgoingMessageResult>;

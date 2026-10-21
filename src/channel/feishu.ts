@@ -1,8 +1,12 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
-import type { Channel, IncomingMessage } from '../types/channel.js';
 import type { FeishuChannelConfig } from '../config.js';
 import { loadFeishuConfigFromEnv } from '../config.js';
-import type { MessageBus, OutgoingMessage, OutgoingMessageResult } from '../types/messages.js';
+import type { Channel, IncomingMessage } from '../types/channel.js';
+import type {
+  MessageBus,
+  OutgoingMessage,
+  OutgoingMessageResult,
+} from '../types/messages.js';
 
 export interface FeishuMessage {
   id: string;
@@ -47,7 +51,9 @@ function extractImageKeys(content: string): string[] {
  * reply 会直接报 99992354，必须改走 chatId 直发。
  */
 function isOpenMessageId(id: string | undefined): id is string {
-  return typeof id === 'string' && (id.startsWith('om_') || id.startsWith('omt_'));
+  return (
+    typeof id === 'string' && (id.startsWith('om_') || id.startsWith('omt_'))
+  );
 }
 
 export class FeishuChannel implements Channel {
@@ -107,9 +113,7 @@ export class FeishuChannel implements Channel {
     messageId: string,
     content: string,
     limit = 4,
-  ): Promise<
-    Array<{ bytes: string; mimeType: string; name: string }>
-  > {
+  ): Promise<Array<{ bytes: string; mimeType: string; name: string }>> {
     const keys = extractImageKeys(content).slice(0, limit);
     if (!keys.length) return [];
     const files: Array<{ bytes: string; mimeType: string; name: string }> = [];
@@ -184,7 +188,9 @@ export class FeishuChannel implements Channel {
     }
   }
 
-  private async handleOutgoing(msg: OutgoingMessage): Promise<OutgoingMessageResult> {
+  private async handleOutgoing(
+    msg: OutgoingMessage,
+  ): Promise<OutgoingMessageResult> {
     try {
       if (msg.type === 'clear-reaction' && msg.messageId) {
         await this.clearReaction(msg.messageId);
@@ -205,7 +211,10 @@ export class FeishuChannel implements Channel {
       }
       return { success: false, error: 'No messageId or chatId provided' };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 

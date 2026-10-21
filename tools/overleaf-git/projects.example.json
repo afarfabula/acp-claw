@@ -1,0 +1,18 @@
+{
+  "overleafBaseUrl": "https://overleaf.afarfabula.org",
+  "webApiBaseUrl": "http://127.0.0.1:3000",
+  "webApiUser": "overleaf",
+  "webApiPasswordFile": "/home_ext/quyanyi/overleaf-data/enroot-data/overleaf-6.3.1/etc/container_environment/WEB_API_PASSWORD",
+  "credentialsFile": "/home_ext/quyanyi/overleaf-data/admin-credentials.txt",
+  "stateDir": "/home_ext/quyanyi/overleaf-data/git-bridge",
+  "pollSeconds": 3,
+  "projects": {
+    "6ad89286858a0825937c92f2": {
+      "name": "resume",
+      "branch": "master",
+      "workingTree": "/home/quyanyi/tiger/resume",
+      "mainFile": "main.tex",
+      "compiler": "xelatex"
+    }
+  }
+}

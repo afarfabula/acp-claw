@@ -13,8 +13,15 @@
 import { closeSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-
-import { costOfTurn, formatCny, resolveModel } from './pricing.js';
+import { loadDeepseekBalance, renderBalanceLine } from './deepseek-balance.js';
+import { type CodingPlan, loadPlan, renderQuotaLine } from './plan-quota.js';
+import {
+  costOfTurn,
+  formatCny,
+  formatTokens,
+  resolveModel,
+} from './pricing.js';
+import { type Lane, laneOfModel } from './router-lane.js';
 
 export interface RoundCost {
   /** 本回合总花费（元） */
@@ -32,7 +39,14 @@ export interface RoundCost {
   sessionAmount: number;
   /** 会话累计请求次数 */
   sessionRequests: number;
+  /** 会话累计输入 / 输出 token（Coding Plan 车道用来显示用量） */
+  sessionInput: number;
+  sessionOutput: number;
   model: string;
+  /** 会话里记录的原始模型名（含车道前缀，如 dsapi-deepseek-flash） */
+  modelRaw: string | null;
+  /** 计费车道：deepseek = 按量计费；plan = 火山方舟 Coding Plan（套餐额度） */
+  lane: Lane;
 }
 
 export function codexHomeDir(): string {
@@ -279,15 +293,51 @@ export function computeRoundCost(rolloutPath: string): RoundCost | null {
     peakRequests,
     sessionAmount: state.session.amount,
     sessionRequests: state.session.requests,
+    sessionInput: state.session.input,
+    sessionOutput: state.session.output,
     model: resolveModel(state.model),
+    modelRaw: state.model,
+    lane: laneOfModel(state.model),
   };
+}
+
+/** 耗时简写：42s / 3m12s / 1h05m */
+export function formatDuration(ms?: number | null): string | null {
+  if (ms === null || ms === undefined) return null;
+  const total = Math.max(0, Math.round(ms / 1000));
+  if (total < 1) return '<1s';
+  if (total < 60) return `${total}s`;
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  if (minutes < 60) return seconds ? `${minutes}m${seconds}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  return `${hours}h${String(restMinutes).padStart(2, '0')}m`;
+}
+
+export interface CostLineOptions {
+  /** 本回合耗时（毫秒），显示成「耗时 3m12s」 */
+  elapsedMs?: number | null;
+  /** Coding Plan 车道的套餐额度片段 */
+  quotaLine?: string | null;
+  /** DeepSeek 官网余额片段（如 💰 余额 ¥43.21） */
+  balanceLine?: string | null;
 }
 
 /**
  * 一行中文摘要，例如：
- * 💸 本回合 ¥0.078（4 次请求 · 缓存命中 99.5% · 高峰）· 会话累计 ¥12.31（465 次请求）
+ * 💸 本回合 ¥0.078（4 次请求 · 耗时 3m12s · 缓存命中 99.5% · 高峰） · 会话累计 ¥12.31（465 次请求） ｜💰 余额 ¥43.21
+ *
+ * Coding Plan 车道（模型名不带 dsapi- 前缀）不按 token 计费，改为显示请求数 / token 量，
+ * 并在配额可用时附上一份套餐额度快照：
+ * 🎟️ 本回合 走 Coding Plan（doubao-seed-2.1-lite） · 4 次请求 · 耗时 3m12s · 输入 12.3k tok … ｜套餐 本周 剩 90%…
  */
-export function formatCostLine(cost: RoundCost): string {
+export function formatCostLine(
+  cost: RoundCost,
+  options: CostLineOptions = {},
+): string {
+  if (cost.lane === 'plan') return formatPlanLine(cost, options);
+  const duration = formatDuration(options.elapsedMs);
   const peakLabel =
     cost.peakRequests === cost.requests
       ? '高峰'
@@ -295,22 +345,68 @@ export function formatCostLine(cost: RoundCost): string {
         ? '空闲'
         : `${cost.peakRequests}/${cost.requests} 次高峰`;
   const hit = (cost.cachedRatio * 100).toFixed(1);
+  const parts = [
+    `${cost.requests} 次请求`,
+    duration ? `耗时 ${duration}` : null,
+    `缓存命中 ${hit}%`,
+    peakLabel,
+  ].filter(Boolean);
+  const balance = options.balanceLine ? ` ｜${options.balanceLine}` : '';
   return (
-    `💸 本回合 ${formatCny(cost.amount)}（${cost.requests} 次请求 · 缓存命中 ${hit}% · ${peakLabel}）` +
-    ` · 会话累计 ${formatCny(cost.sessionAmount)}（${cost.sessionRequests} 次请求）`
+    `💸 本回合 ${formatCny(cost.amount)}（${parts.join(' · ')}）` +
+    ` · 会话累计 ${formatCny(cost.sessionAmount)}（${cost.sessionRequests} 次请求）${balance}`
   );
 }
 
-/** 便捷入口：按 thread id 直接算出可发送的一行；算不出来返回 null */
-export function buildRoundCostLine(
+/** Coding Plan 车道的一行摘要（不显示人民币，按套餐额度口径） */
+function formatPlanLine(cost: RoundCost, options: CostLineOptions): string {
+  const duration = formatDuration(options.elapsedMs);
+  const hit = (cost.cachedRatio * 100).toFixed(1);
+  const model = cost.modelRaw ? `（${cost.modelRaw}）` : '';
+  const roundText =
+    `🎟️ 本回合 走 Coding Plan${model} · ${cost.requests} 次请求 · ` +
+    (duration ? `耗时 ${duration} · ` : '') +
+    `输入 ${formatTokens(cost.input)} tok（缓存命中 ${hit}%）/ 输出 ${formatTokens(cost.output)} tok`;
+  const sessionText =
+    `会话累计 ${cost.sessionRequests} 次请求 · ` +
+    `输入 ${formatTokens(cost.sessionInput)} / 输出 ${formatTokens(cost.sessionOutput)} tok`;
+  const quota = options.quotaLine ? ` ｜${options.quotaLine}` : '';
+  return `${roundText} · ${sessionText}${quota}`;
+}
+
+/**
+ * 便捷入口：按 thread id 直接算出可发送的一行；算不出来返回 null。
+ * Coding Plan 车道顺带查套餐额度，DeepSeek 车道顺带查官网余额（都带 TTL 缓存，
+ * 失败就静默降级）。
+ */
+export async function buildRoundCostLine(
   sessionId: string,
   codexHome?: string,
-): string | null {
+  options: { elapsedMs?: number | null } = {},
+): Promise<string | null> {
   const file = findRolloutFile(sessionId, codexHome);
   if (!file) return null;
   const cost = computeRoundCost(file);
   if (!cost) return null;
-  return formatCostLine(cost);
+
+  const lineOptions: CostLineOptions = { elapsedMs: options.elapsedMs ?? null };
+
+  if (cost.lane === 'plan') {
+    try {
+      const plan: CodingPlan = await loadPlan({ timeoutMs: 4000 });
+      if (plan.ok) lineOptions.quotaLine = renderQuotaLine(plan);
+    } catch {
+      lineOptions.quotaLine = null;
+    }
+  } else {
+    try {
+      const balance = await loadDeepseekBalance({ timeoutMs: 4000 });
+      lineOptions.balanceLine = renderBalanceLine(balance);
+    } catch {
+      lineOptions.balanceLine = null;
+    }
+  }
+  return formatCostLine(cost, lineOptions);
 }
 
 /** 仅供测试：清掉增量解析缓存 */

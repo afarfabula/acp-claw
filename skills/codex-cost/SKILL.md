@@ -10,6 +10,15 @@ trigger: 当用户询问 Codex 花了多少钱、token 用量、成本统计，�
 官方人民币价（含峰谷）换算。代码在仓库 `acp-claw/tools/codex-cost`，
 工作区入口是软链接 `~/.acp-claw/tools/codex-cost`。
 
+**两条计费车道**（跟本机 `~/.codex/router` 网关同规则）：
+
+- 模型名带 `dsapi-` 前缀（如 `dsapi-deepseek-flash`）→ DeepSeek 官网按量计费，报人民币
+- 其余模型名（如 `doubao-seed-2.1-lite`、`deepseek-v4.1-flash`）→ 火山方舟 Coding Plan，
+  **不花人民币**，看套餐额度（5 小时 / 本周 / 本月已用百分比 + 重置时间）
+
+飞书回复末尾的 `💸/🎟️` 行与终端状态栏都按这个分车道：Coding Plan 会话显示请求数 / token
+量和套餐额度快照（数据由 `arkcli usage plan --product coding-plan` 查询，带 TTL 缓存）。
+
 ## 常用命令
 
 ```bash
@@ -17,10 +26,11 @@ node ~/.acp-claw/tools/codex-cost/cli.mjs summary    # 今天 / 本月 / 全部�
 node ~/.acp-claw/tools/codex-cost/cli.mjs daily 14   # 按日明细
 node ~/.acp-claw/tools/codex-cost/cli.mjs sessions   # 花费最高的会话
 node ~/.acp-claw/tools/codex-cost/cli.mjs price      # 当前时段单价与峰谷状态
+node ~/.acp-claw/tools/codex-cost/cli.mjs plan       # Coding Plan 套餐额度快照（走 arkcli，需要登录）
 node ~/.acp-claw/tools/codex-cost/cli.mjs install    # 安装每轮人民币状态栏
 ```
 
-沙箱内可以直接运行（纯本地读文件，无网络），不需要提权。
+沙箱内可以直接运行（纯本地读文件，无网络），不需要提权；`plan` 会访问网络，需要提权。
 
 ## 回答用户时的要点
 
@@ -29,4 +39,6 @@ node ~/.acp-claw/tools/codex-cost/cli.mjs install    # 安装每轮人民币状�
   「会话」的差对得上；**不是**最后一次请求的花费。用户问「这轮到底花了多少」时报本回合
 - 输入 token 里绝大部分是**缓存命中**（通常 98% 以上），所以真实花费远低于按未命中价估算
 - 高峰时段为北京时间周一至周五 09:00–12:00、14:00–18:00，空闲时段半价；大批量任务建议错峰
+- 用户问「套餐用了多少 / 还剩多少」时，用 `cli.mjs plan`（或 `arkcli usage plan`）读套餐额度，
+  不要拿人民币估算数糊弄；Coding Plan 只有 quota 快照，没有按模型拆分
 - 价格或模型有变动时改 `pricing.mjs` 的 `PRICING` 与 `MODEL_ALIASES`
