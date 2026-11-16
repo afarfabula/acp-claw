@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec unshare -Ur /home/quyanyi/.local/opt/enroot-4.2.1/usr/bin/enroot-mksquashovlfs "$@"

@@ -38,6 +38,10 @@
         "query": "(cat:cs.CL OR cat:cs.LG OR cat:cs.CV) AND (all:\"quantization\" OR all:\"W4A4\" OR all:\"low-bit\")"
       },
       {
+        "label": "Transformer QAT（低比特训练）",
+        "query": "(cat:cs.CL OR cat:cs.LG OR cat:cs.CV) AND (all:\"transformer\" OR all:\"ViT\" OR all:\"BERT\") AND (all:\"quantization-aware training\" OR all:\"quantization aware training\" OR all:\"binary transformer\" OR all:\"binary BERT\" OR all:\"low-bit transformer\")"
+      },
+      {
         "label": "推理框架 / Infra",
         "query": "(cat:cs.DC OR cat:cs.LG OR cat:cs.CL) AND (all:\"LLM serving\" OR all:\"KV cache\" OR all:\"inference engine\" OR all:\"decode throughput\")"
       }
@@ -80,6 +84,14 @@
     "noise": {
       "keywords": ["调停课", "调课", "停课", "补课", "监考", "考场", "借教室", "借用教室", "会议室", "教师培训", "职称", "基建", "停电", "维修"]
     }
+  },
+  "mail": {
+    "enabled": true,
+    "maxDetails": 6
+  },
+  "bill": {
+    "enabled": true,
+    "chartTitle": "消费分类"
   },
   "news": {
     "windowHours": 30,

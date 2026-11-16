@@ -1,4 +1,8 @@
-import type { OutgoingMessage, OutgoingMessageResult, MessageHandler } from '../types/messages.js';
+import type {
+  MessageHandler,
+  OutgoingMessage,
+  OutgoingMessageResult,
+} from '../types/messages.js';
 
 export class MessageBus {
   private handlers = new Map<string, MessageHandler>();
@@ -6,12 +10,18 @@ export class MessageBus {
   async publish(message: OutgoingMessage): Promise<OutgoingMessageResult> {
     const handler = this.handlers.get(message.channelName);
     if (!handler) {
-      return { success: false, error: `No channel subscribed for "${message.channelName}"` };
+      return {
+        success: false,
+        error: `No channel subscribed for "${message.channelName}"`,
+      };
     }
     try {
       return await handler(message);
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 

@@ -4,8 +4,8 @@
 
 ```text
 cron（每天 08:30，--fresh-session）→ 新会话里的 agent
-        │  1) 运行 cli.mjs collect   采集素材（天气/余额/论文/Infra/项目 commit）
-        │  2) 模型据此写日报正文
+        │  1) 运行 cli.mjs brief     自动判断 07 完整 / 12、18 增量并采集素材
+        │  2) 模型只读这份素材，写简报正文
         │  3) 运行 cli.mjs publish   写入飞书文档（按月自动建文档）
         ▼
       最终回复被 cron 的 --chat-id 直接发到飞书群
@@ -29,6 +29,11 @@ cron（每天 08:30，--fresh-session）→ 新会话里的 agent
 ```bash
 CLI=/home_ext/quyanyi/.acp-claw/tools/daily-report/cli.mjs
 
+node $CLI brief                      # 07 点完整素材；12/18 点自动切增量
+node $CLI brief --mode full          # 强制完整：天气/余额/账单/论文/Infra/项目 + 新闻/学校/邮件
+node $CLI brief --mode delta         # 强制增量：只取未报过的论文/新闻 + 新增学校通知/邮件
+node $CLI brief --send-chat <chatId> --json
+                                     # cron 用；完整模式同时发送昨日消费饼图，JSON 返回素材路径
 node $CLI collect                     # 采集素材：打印 Markdown，落盘 data/<日期>.json 与 <日期>-brief.md
 node $CLI collect --json              # 只打印落盘路径
 node $CLI news                        # 采集 AI 新闻素材：落盘 data/<日期>-news.json 与 <日期>-news.md
@@ -36,6 +41,12 @@ node $CLI news --json                 # 只打印路径、条数与各源成功/
 node $CLI school                      # 采集学校/学院通知素材（默认 7 天窗口，标记已读，只详列新增）
 node $CLI school --json               # 只打印路径、新增条数与各源状态
 node $CLI school --days 30            # 放宽时间窗（首次跑建议大一点，把历史一次记进已读）
+node $CLI mail --json                 # 163 新邮件文字摘要
+node $CLI bill --daily-chart --send-chat <chatId> --json
+                                      # 早上用：生成昨日消费饼图、发群，发送后删除临时 PNG
+node $CLI bill --json                 # 12/18 点用：只输出昨日和本月累计文字，不画图
+node $CLI bill --daily-chart --date 2026-10-27 --json
+                                      # 指定日期重算（生成后同样自动删除临时图）
 node $CLI school --all                # 忽略已读状态，全部当作新增（调试用，不更新已读）
 node $CLI school --no-detail          # 不抓正文摘要（更快，只用标题）
 node $CLI jobs                        # 采集成都技术实习：官方源 + 实习僧 + DeepSeek 网页核验
@@ -67,6 +78,14 @@ node $CLI fixdoc                      # 重排/规范化当月文档（先备份
 node $CLI fixdoc --fixes <json>       # 额外按 json 里的规则改日期 / 丢重复条目
 node $CLI config                      # 查看运行时配置
 ```
+
+### 定时任务编排（2026-11-06 起）
+
+- `每日简报`：07:00 完整日报；12:00/18:00 只报新增内容。模型只需运行一次 `brief`、检查
+  Paper Reading 批注、写正文、`publish`，不再逐个调度采集命令。
+- `实习岗位网页`：独立每日 18:30 更新一次，不再占用日报时间。
+- `brief` 把新闻/论文的已报记录放在 `state.json` 的 `news.seen` / `papers.seen`（保留 30 天）；
+  学校通知和邮件继续用原有增量状态。
 
 ## 配置
 
@@ -281,7 +300,7 @@ paperdoc --spec …        → validateSpec 校验 → renderWeeklyDoc 渲染 �
 
 模型每天写的内容长短不一，为了让文档可读、可检索，`publish` 会先**规范化**再写入：
 
-- 每条简报固定为二级标题 `## YYYY-MM-DD HH:MM`；下面固定 7 个三级标题栏目，
+- 每条简报固定为二级标题 `## YYYY-MM-DD HH:MM`；下面使用有内容的固定顺序栏目，
   顺序固定：☀️ 天气 → 🏫 学校通知 → 📰 AI 新闻 → 💰 DeepSeek 余额 → 📄 论文 → 🛠 Infra 动态 → 📌 项目进展
 - **按时间倒序**：最新一条永远在文档最上面（`publish` 读出文档结构、算出插入位置，
   不再是无脑追加到文末）；同一天同一分钟重复推送会**覆盖**旧的那条，不留两份

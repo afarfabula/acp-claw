@@ -1,8 +1,8 @@
 // 飞书投递：写文档（用户身份，复用 feishu-doc CLI）+（可选）发群消息（应用身份）
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { tenantToken } from '../feishu-doc/auth.mjs';
 
 const FEISHU_API = 'https://open.feishu.cn/open-apis';
@@ -48,6 +48,11 @@ export function appendDoc(docRef, markdown) {
 /** 导出文档为 Markdown（保留标题级别 / 列表 / 链接 / 表格） */
 export function docMarkdown(docRef) {
   return runDocCli(['md', docRef.url ?? docRef.id]);
+}
+
+/** 文档元信息（含 document_id；wiki 链接会解析成真实 docx id） */
+export function docMeta(docRef) {
+  return JSON.parse(runDocCli(['meta', docRef.url ?? docRef.id]));
 }
 
 /** 按文档顺序列出根块（含 type / text / children） */
@@ -109,4 +114,53 @@ export async function sendMessage(receiveId, markdown, receiveIdType = 'chat_id'
 
 export function sendChatMessage(chatId, markdown) {
   return sendMessage(chatId, markdown, 'chat_id');
+}
+
+export async function sendImageMessage(
+  receiveId,
+  imagePath,
+  receiveIdType = 'chat_id',
+) {
+  const token = await tenantToken();
+  const bytes = readFileSync(imagePath);
+  const form = new FormData();
+  form.append('image_type', 'message');
+  form.append(
+    'image',
+    new Blob([bytes], { type: 'image/png' }),
+    basename(imagePath),
+  );
+  const uploadRes = await fetch(`${FEISHU_API}/im/v1/images`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+    body: form,
+    signal: AbortSignal.timeout(30000),
+  });
+  const upload = await uploadRes.json();
+  if (upload.code !== 0 || !upload.data?.image_key) {
+    throw new Error(
+      `上传图片失败: code=${upload.code} ${upload.msg || ''}`,
+    );
+  }
+  const sendRes = await fetch(
+    `${FEISHU_API}/im/v1/messages?receive_id_type=${receiveIdType}`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json; charset=utf-8',
+      },
+      body: JSON.stringify({
+        receive_id: receiveId,
+        msg_type: 'image',
+        content: JSON.stringify({ image_key: upload.data.image_key }),
+      }),
+      signal: AbortSignal.timeout(20000),
+    },
+  );
+  const sent = await sendRes.json();
+  if (sent.code !== 0) {
+    throw new Error(`发送图片失败: code=${sent.code} ${sent.msg || ''}`);
+  }
+  return sent.data?.message_id;
 }

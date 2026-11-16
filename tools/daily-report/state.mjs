@@ -46,6 +46,14 @@ const DEFAULTS = {
   projects: { hours: 48, github: { enabled: false }, local: [] },
   feishu: {},
   paperReading: { enabled: true, docId: '', markSolved: true },
+  mail: {
+    enabled: true,
+    maxDetails: 6,
+  },
+  bill: {
+    enabled: true,
+    chartTitle: '消费分类',
+  },
 };
 
 function deepMerge(base, override) {

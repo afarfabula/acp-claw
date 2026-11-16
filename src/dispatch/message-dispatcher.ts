@@ -3,7 +3,7 @@ import { handleCommand } from '../commands/handlers.js';
 import type { Lang } from '../commands/i18n.js';
 import { parseSlashCommand } from '../commands/parser.js';
 import type { AcpClawConfig } from '../config.js';
-import { buildRoundCostLine } from '../cost/session-cost.js';
+import { buildRoundCostLine, formatDuration } from '../cost/session-cost.js';
 import {
   buildInitGuidance,
   buildInitialContext,
@@ -11,7 +11,7 @@ import {
 import type { EventBus } from '../infra/event-bus.js';
 import type { MessageBus } from '../infra/message-bus.js';
 import type { Logger } from '../logger.js';
-import { PromptPipeline } from '../pipeline/pipeline.js';
+import { type PipelineResult, PromptPipeline } from '../pipeline/pipeline.js';
 import type { SessionManager } from '../session/manager.js';
 import type { ControllerEvents } from '../types/events.js';
 
@@ -141,11 +141,60 @@ export class MessageDispatcher {
    * 回合结束后，按 Codex 会话记录算本回合花费并追加一行。
    * 由 config.replyCost 控制（默认关闭），算不出来就静默跳过。
    */
+  /**
+   * 长任务进度心跳：回合跑久了每隔一段时间发一条「⏳ 进行中 …」，让飞书那侧
+   * 一直能看到进展。由 config.progress 控制（默认开启，仅飞书通道）。
+   * 返回停止函数，回合结束时调用。
+   */
+  private startProgressHeartbeat(opts: {
+    outputChannel: string;
+    payloadChannel: string;
+    sessionKey: string;
+    msg: { id?: string; chatId?: string };
+    startedAt: number;
+    activity: () => string;
+    lastOutboundAt: () => number;
+  }): () => void {
+    const cfg = this.config.progress ?? {};
+    const channels = cfg.channels ?? ['feishu'];
+    if (cfg.enabled === false || !channels.includes(opts.payloadChannel)) {
+      return () => {};
+    }
+    const afterMs = cfg.afterMs ?? 30_000;
+    const intervalMs = cfg.intervalMs ?? 60_000;
+    const tickMs = Math.max(250, Math.min(10_000, Math.floor(afterMs / 3)));
+    let nextDue = opts.startedAt + afterMs;
+    let stopped = false;
+
+    const timer = setInterval(() => {
+      if (stopped) return;
+      const now = Date.now();
+      if (now < nextDue) return;
+      if (now - opts.lastOutboundAt() < intervalMs) {
+        nextDue = now + 10_000;
+        return;
+      }
+      nextDue = now + intervalMs;
+      const elapsed = formatDuration(now - opts.startedAt) ?? '';
+      const line = `⏳ 进行中 ${elapsed} · 最近：${opts.activity()}`;
+      this.logger.info('progress', `[${opts.sessionKey}] ${line}`);
+      void this.publishReply(opts.outputChannel, opts.msg, line).catch(
+        () => {},
+      );
+    }, tickMs);
+
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }
+
   private async publishRoundCost(
     outputChannel: string,
     sessionKey: string,
     msg: { id?: string; chatId?: string },
     payloadChannel: string,
+    elapsedMs?: number,
   ): Promise<void> {
     const cfg = this.config.replyCost;
     if (!cfg?.enabled) return;
@@ -157,7 +206,9 @@ export class MessageDispatcher {
     if (!sessionId) return;
 
     try {
-      const line = buildRoundCostLine(sessionId, cfg.codexHome);
+      const line = await buildRoundCostLine(sessionId, cfg.codexHome, {
+        elapsedMs: elapsedMs ?? null,
+      });
       if (!line) return;
       this.logger.info('cost', `[${sessionKey}] ${line}`);
       await this.publishReply(outputChannel, msg, line);
@@ -218,6 +269,7 @@ export class MessageDispatcher {
 
     // Normal message processing
     try {
+      const turnStartedAt = Date.now();
       let text = msg.content;
 
       if (payload.channel === 'feishu' && this.config.feishu?.appName) {
@@ -275,27 +327,48 @@ export class MessageDispatcher {
       if (expectReplay) {
         session.expectReplay = false; // 仅第一次 prompt 后 replay
       }
-      const result = await this.pipeline.execute(
+      // 长任务进度心跳：跑久了自动发「⏳ 进行中 … · 最近：<当前动作>」
+      let lastActivity = '思考中';
+      let lastOutboundAt = Date.now();
+      const stopHeartbeat = this.startProgressHeartbeat({
+        outputChannel,
+        payloadChannel: payload.channel,
         sessionKey,
-        parts,
-        {
-          onText: async (chunk) => {
-            console.log(`📝 [agent] ${chunk}`);
-            this.logger.info('agent-text-complete', chunk);
-            await this.publishReply(outputChannel, msg, chunk);
-          },
-          onTool: async (toolLog) => {
-            console.log(`🔧 [tool] ${toolLog}`);
-            this.logger.info('agent-tool', `[${sessionKey}] ${toolLog}`);
+        msg,
+        startedAt: turnStartedAt,
+        activity: () => lastActivity,
+        lastOutboundAt: () => lastOutboundAt,
+      });
+      let result: PipelineResult;
+      try {
+        result = await this.pipeline.execute(
+          sessionKey,
+          parts,
+          {
+            onText: async (chunk) => {
+              console.log(`📝 [agent] ${chunk}`);
+              this.logger.info('agent-text-complete', chunk);
+              lastOutboundAt = Date.now();
+              await this.publishReply(outputChannel, msg, chunk);
+            },
+            onTool: async (toolLog) => {
+              console.log(`🔧 [tool] ${toolLog}`);
+              this.logger.info('agent-tool', `[${sessionKey}] ${toolLog}`);
+              lastActivity = toolLog.split(' | input:')[0].slice(0, 80);
 
-            if (this.config.forwardToolMessages) {
-              const toolMsg = `🔧 工具调用: ${toolLog}`;
-              void this.publishReply(outputChannel, msg, toolMsg);
-            }
+              if (this.config.forwardToolMessages) {
+                const toolMsg = `🔧 工具调用: ${toolLog}`;
+                lastOutboundAt = Date.now();
+                void this.publishReply(outputChannel, msg, toolMsg);
+              }
+            },
           },
-        },
-        { expectReplay },
-      );
+          { expectReplay },
+        );
+      } finally {
+        stopHeartbeat();
+      }
+      const elapsedMs = Date.now() - turnStartedAt;
 
       // 回合结束后追加一行本回合花费（config.replyCost 控制，默认关闭）
       if (result.hasSentMessage) {
@@ -304,6 +377,7 @@ export class MessageDispatcher {
           sessionKey,
           msg,
           payload.channel,
+          elapsedMs,
         );
       }
 

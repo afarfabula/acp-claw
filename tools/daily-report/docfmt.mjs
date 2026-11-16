@@ -8,6 +8,8 @@ const TZ_OFFSET_MS = 8 * 3600 * 1000; // 日报固定用北京时间
 export const SECTION_ORDER = [
   '☀️ 天气',
   '🏫 学校通知',
+  '📧 邮箱',
+  '💳 账单',
   '📰 AI 新闻',
   '💰 DeepSeek 余额',
   '📄 论文',
@@ -24,32 +26,37 @@ const ALIASES = new Map(Object.entries({
   '校园通知': SECTION_ORDER[1],
   '学院通知': SECTION_ORDER[1],
   '通知': SECTION_ORDER[1],
-  'news': SECTION_ORDER[2],
-  'ai新闻': SECTION_ORDER[2],
-  '新闻': SECTION_ORDER[2],
-  '新闻速览': SECTION_ORDER[2],
-  'balance': SECTION_ORDER[3],
-  'deepseek余额': SECTION_ORDER[3],
-  '余额': SECTION_ORDER[3],
-  '花费': SECTION_ORDER[3],
-  '成本': SECTION_ORDER[3],
-  '论文': SECTION_ORDER[4],
-  'papers': SECTION_ORDER[4],
-  'arxiv': SECTION_ORDER[4],
-  'hf热榜': SECTION_ORDER[4],
-  'hf日榜': SECTION_ORDER[4],
-  'infra': SECTION_ORDER[5],
-  'infra动态': SECTION_ORDER[5],
-  '推理框架': SECTION_ORDER[5],
-  '推理infra': SECTION_ORDER[5],
-  '项目进展': SECTION_ORDER[5 + 1],
-  'projects': SECTION_ORDER[6],
-  '项目': SECTION_ORDER[6],
+  '邮箱': SECTION_ORDER[2],
+  'email': SECTION_ORDER[2],
+  'mail': SECTION_ORDER[2],
+  '账单': SECTION_ORDER[3],
+  'bill': SECTION_ORDER[3],
+  'news': SECTION_ORDER[4],
+  'ai新闻': SECTION_ORDER[4],
+  '新闻': SECTION_ORDER[4],
+  '新闻速览': SECTION_ORDER[4],
+  'balance': SECTION_ORDER[5],
+  'deepseek余额': SECTION_ORDER[5],
+  '余额': SECTION_ORDER[5],
+  '花费': SECTION_ORDER[5],
+  '成本': SECTION_ORDER[5],
+  '论文': SECTION_ORDER[6],
+  'papers': SECTION_ORDER[6],
+  'arxiv': SECTION_ORDER[6],
+  'hf热榜': SECTION_ORDER[6],
+  'hf日榜': SECTION_ORDER[6],
+  'infra': SECTION_ORDER[7],
+  'infra动态': SECTION_ORDER[7],
+  '推理框架': SECTION_ORDER[7],
+  '推理infra': SECTION_ORDER[7],
+  '项目进展': SECTION_ORDER[8],
+  'projects': SECTION_ORDER[8],
+  '项目': SECTION_ORDER[8],
 }));
 
 /** 章节标签里可以安全删掉的前缀（删掉后正文不会丢信息） */
 const STRIP_SAFE = new Set([
-  '天气', 'ai新闻', '新闻', 'deepseek余额', '余额', '论文', 'infra', 'infra动态', '项目进展', '学校通知', '校园通知',
+  '天气', 'ai新闻', '新闻', 'deepseek余额', '余额', '论文', 'infra', 'infra动态', '项目进展', '学校通知', '校园通知', '邮箱', 'email', 'mail', '账单', 'bill',
 ]);
 
 const EMOJI_RE = /^[^\p{L}\p{N}]{1,4}\s*/u;
@@ -339,8 +346,8 @@ export function renderEntry(entry) {
 
 export const DOC_INTRO =
   '本文件由 acp-claw 的 daily-report 工具自动维护：每次推送按固定栏目追加一篇简报，'
-  + '**按时间倒序排列（最新在最上面）**。栏目顺序：☀️ 天气 → 🏫 学校通知 → 📰 AI 新闻 → '
-  + '💰 DeepSeek 余额 → 📄 论文 → 🛠 Infra 动态 → 📌 项目进展。';
+  + '**按时间倒序排列（最新在最上面）**。栏目顺序：☀️ 天气 → 🏫 学校通知 → 📧 邮箱 → 💳 账单 → '
+  + '📰 AI 新闻 → 💰 DeepSeek 余额 → 📄 论文 → 🛠 Infra 动态 → 📌 项目进展。';
 
 /** 渲染整篇文档：固定简介 + 条目倒序 */
 export function renderDoc(entries, { intro = DOC_INTRO } = {}) {

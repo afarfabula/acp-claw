@@ -3,6 +3,7 @@
 *.local
 *.log*
 .acp-claw/
+volcengine-ark-cli-*.tgz
 
 # Dist
 node_modules
@@ -17,6 +18,12 @@ tools/gpu-monitor/data/
 # Feishu doc tool runtime data (tokens & scans live outside the repo)
 tools/feishu-doc/data/
 tools/feishu-doc/*.token.json
+
+# Locally vendored executables are platform-specific; fetch/install them separately.
+tools/codex-cost/vendor/
+
+# Local tunnel deployment contains account-specific identifiers and credentials.
+tools/cloudflared/config.yml
 
 # Handwrite tool: 字体（50MB+，用 fetch_fonts.py + fontlib.py 重建）、venv、渲染产物
 tools/handwrite/.venv/

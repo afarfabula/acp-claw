@@ -11,6 +11,12 @@ export interface SessionUpdateMeta {
   lastChunk?: boolean;
   type?: 'full' | 'delta';
   messageId?: string;
+  codex?: {
+    threadStatus?: {
+      type?: string;
+      status?: string;
+    };
+  };
 }
 
 export interface SessionUpdate {
@@ -58,13 +64,20 @@ type JsonRpcMessage =
   | JsonRpcNotification
   | JsonRpcIncomingRequest;
 
+interface PendingRequest {
+  resolve: (v: unknown) => void;
+  reject: (e: Error) => void;
+  method: string;
+  sessionId?: string;
+  startedAt: number;
+  lastActivityAt: number;
+}
+
 export class AcpClient extends EventEmitter {
   private process: ChildProcess | null = null;
   private nextId = 1;
-  private pending = new Map<
-    number | string,
-    { resolve: (v: unknown) => void; reject: (e: Error) => void }
-  >();
+  private pending = new Map<number | string, PendingRequest>();
+  private promptIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private command: string;
   private args: string[];
   private env: Record<string, string> | undefined;
@@ -109,6 +122,10 @@ export class AcpClient extends EventEmitter {
     });
 
     this.process.on('close', (code) => {
+      for (const timer of this.promptIdleTimers.values()) {
+        clearTimeout(timer);
+      }
+      this.promptIdleTimers.clear();
       this.rejectAllPending(
         new Error(`Agent process exited with code ${code}`),
       );
@@ -248,7 +265,21 @@ export class AcpClient extends EventEmitter {
       }
       const id = this.nextId++;
       const msg: JsonRpcRequest = { jsonrpc: '2.0', id, method, params };
-      this.pending.set(id, { resolve, reject });
+      const sessionId =
+        params &&
+        typeof params === 'object' &&
+        'sessionId' in params &&
+        typeof (params as { sessionId?: unknown }).sessionId === 'string'
+          ? (params as { sessionId: string }).sessionId
+          : undefined;
+      this.pending.set(id, {
+        resolve,
+        reject,
+        method,
+        sessionId,
+        startedAt: Date.now(),
+        lastActivityAt: 0,
+      });
       this.process.stdin.write(`${JSON.stringify(msg)}\n`);
     });
   }
@@ -278,6 +309,9 @@ export class AcpClient extends EventEmitter {
       const pending = this.pending.get(response.id);
       if (!pending) return;
       this.pending.delete(response.id);
+      if (pending.sessionId) {
+        this.clearPromptIdleSettlement(pending.sessionId);
+      }
       if (response.error) {
         pending.reject(new Error(response.error.message));
       } else {
@@ -295,9 +329,77 @@ export class AcpClient extends EventEmitter {
         | { sessionId: string; update: SessionUpdate }
         | undefined;
       if (params) {
+        const isIdle = this.isIdleSessionUpdate(params.update);
+        for (const pending of this.pending.values()) {
+          if (
+            pending.method === 'session/prompt' &&
+            pending.sessionId === params.sessionId
+          ) {
+            if (isIdle) {
+              this.schedulePromptIdleSettlement(params.sessionId);
+            } else {
+              pending.lastActivityAt = Date.now();
+              this.clearPromptIdleSettlement(params.sessionId);
+            }
+          }
+        }
         this.emit('session-update', params.sessionId, params.update);
       }
     }
+  }
+
+  private isIdleSessionUpdate(update: SessionUpdate): boolean {
+    const threadStatus = update._meta?.codex?.threadStatus;
+    return (
+      update.sessionUpdate === 'session_info_update' &&
+      (threadStatus?.type === 'idle' || threadStatus?.status === 'idle')
+    );
+  }
+
+  /**
+   * Some Codex versions emit an idle thread status but never resolve the
+   * session/prompt JSON-RPC request. Once a prompt has produced activity and
+   * then reports idle, cancel the stale prompt so the request can settle.
+   * If the agent still does not answer, resolve it locally; a late response is
+   * harmless because the request is no longer pending.
+   */
+  private schedulePromptIdleSettlement(sessionId: string): void {
+    if (this.promptIdleTimers.has(sessionId)) return;
+    const pendingEntry = [...this.pending.entries()].find(
+      ([, pending]) =>
+        pending.method === 'session/prompt' &&
+        pending.sessionId === sessionId &&
+        pending.lastActivityAt > pending.startedAt,
+    );
+    if (!pendingEntry) return;
+
+    const timer = setTimeout(() => {
+      this.promptIdleTimers.delete(sessionId);
+      const entry = [...this.pending.entries()].find(
+        ([, pending]) =>
+          pending.method === 'session/prompt' &&
+          pending.sessionId === sessionId,
+      );
+      if (!entry) return;
+
+      const [requestId, pending] = entry;
+      this.notify('session/cancel', { sessionId });
+
+      const fallback = setTimeout(() => {
+        if (this.pending.delete(requestId)) {
+          pending.resolve({ stopReason: 'end_turn' });
+        }
+      }, 1500);
+      fallback.unref?.();
+    }, 1000);
+    this.promptIdleTimers.set(sessionId, timer);
+  }
+
+  private clearPromptIdleSettlement(sessionId: string): void {
+    const timer = this.promptIdleTimers.get(sessionId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.promptIdleTimers.delete(sessionId);
   }
 
   private handleAgentRequest(msg: JsonRpcIncomingRequest): void {

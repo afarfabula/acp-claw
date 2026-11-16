@@ -5,10 +5,15 @@
  * 由 ~/.codex/hooks.json 调用，stdin 收到 Codex 的 hook 事件 JSON：
  *   { session_id, transcript_path, hook_event_name, cwd, model, ... }
  * stdout 输出 { "systemMessage": "..." }，Codex 会把它渲染到对话里（不进模型上下文）。
+ *
+ * 现在有两套计费口径：
+ *   - 车道 = plan（火山方舟 Coding Plan，模型名不带 dsapi- 前缀）：本回合不花人民币，
+ *     改显示「套餐额度」（5 小时 session / 本周 / 本月），数据来自 arkcli（带 TTL 缓存）。
+ *   - 车道 = deepseek（模型名带 dsapi- 前缀）：仍按 DeepSeek 官方人民币价目表估算。
  */
 
 import { basename } from 'node:path';
-
+import { laneOfModel, loadPlan, renderQuotaLine } from './plan.mjs';
 import { DEFAULT_MODEL, formatCny, formatTokens } from './pricing.mjs';
 import { lastRound, parseRollout } from './usage.mjs';
 
@@ -72,22 +77,47 @@ async function main() {
 
   const project = basename(payload.cwd ?? session.cwd ?? process.cwd());
   const model = session.model ?? DEFAULT_MODEL;
+  const lane = laneOfModel(model);
+  const isPlan = lane === 'plan';
   const contextWindow = session.contextWindow ?? 0;
   const usedRatio = contextWindow > 0 ? last.usage.input / contextWindow : 0;
 
+  const roundTokens = round.turns.reduce(
+    (sum, turn) => sum + turn.usage.input + turn.usage.output,
+    0,
+  );
+
   // 「本回合」= 这次提问引发的全部请求（含中间的工具调用轮），与两次状态栏之间
   // 「会话」的增量对得上；没有回合边界时退回「本轮」= 最后一次请求。
-  const roundPart = round.isComplete
-    ? `${DIM}本回合${RESET} ${color(PEACH, formatCny(roundCost))} ${DIM}(${round.turns.length} 次请求)${RESET}`
-    : `${DIM}本轮${RESET} ${color(PEACH, formatCny(last.cost))}`;
+  // Coding Plan 车道不按 token 计费，所以改显示本回合请求数 / token 量。
+  const roundPart = isPlan
+    ? `${DIM}本回合${RESET} ${color(PEACH, `${round.turns.length || 1} 次请求`)} ${DIM}· ${formatTokens(roundTokens)} tok${RESET}`
+    : round.isComplete
+      ? `${DIM}本回合${RESET} ${color(PEACH, formatCny(roundCost))} ${DIM}(${round.turns.length} 次请求)${RESET}`
+      : `${DIM}本轮${RESET} ${color(PEACH, formatCny(last.cost))}`;
+
+  const sessionPart = isPlan
+    ? `${DIM}会话${RESET} ${formatTokens(sessionTokens)} tok`
+    : `${DIM}会话${RESET} ${color(PINK, formatCny(sessionCost))}`;
 
   const line1 = [
     color(GREEN, `[${project}]`),
     roundPart,
-    `${DIM}会话${RESET} ${color(PINK, formatCny(sessionCost))}`,
-    `${DIM}累计${RESET} ${formatTokens(sessionTokens)} tok`,
+    sessionPart,
     `${DIM}${model}${RESET}`,
   ].join(' | ');
+
+  // 套餐额度行：只在 Coding Plan 车道查询，避免每次 DeepSeek 调用都白发一次网络。
+  // 读取失败时静默跳过（想看失败原因就跑 `codex-cost plan`），不让状态栏变噪音。
+  let quotaLine = null;
+  if (isPlan) {
+    try {
+      const plan = await loadPlan({ timeoutMs: 4000 });
+      if (plan.ok) quotaLine = renderQuotaLine(plan);
+    } catch {
+      quotaLine = null;
+    }
+  }
 
   const line2 = [
     `${DIM}上下文${RESET} ${formatTokens(last.usage.input)}/${formatTokens(contextWindow)} ${bar(usedRatio)} ${(usedRatio * 100).toFixed(0)}%`,
@@ -95,7 +125,10 @@ async function main() {
     `${DIM}${listed}/${turns.length} 轮高峰${RESET}`,
   ].join(' | ');
 
-  const text = `\n${line1}\n${color(MAUVE, line2)}`;
+  const lines = [line1];
+  if (quotaLine) lines.push(color(MAUVE, quotaLine));
+  lines.push(color(MAUVE, line2));
+  const text = `\n${lines.join('\n')}`;
   process.stdout.write(JSON.stringify({ systemMessage: text }));
 }
 

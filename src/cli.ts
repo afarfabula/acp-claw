@@ -240,7 +240,10 @@ cronCmd
     '把目标群绑定到该会话：群里的后续消息继续这个上下文',
     false,
   )
-  .option('--agent <agent>', '使用指定 agent（如 codex-daily，可配独立 API key）')
+  .option(
+    '--agent <agent>',
+    '使用指定 agent（如 codex-daily，可配独立 API key）',
+  )
   .option('--one-shot', '执行一次后自动删除', false)
   .action(async (opts) => {
     const workDir = resolveWorkDir(program.opts().workDir);

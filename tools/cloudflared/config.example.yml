@@ -1,0 +1,17 @@
+tunnel: REPLACE_WITH_TUNNEL_ID
+credentials-file: REPLACE_WITH_LOCAL_CREDENTIALS_JSON_PATH
+
+ingress:
+  - hostname: home.example.com
+    service: http://localhost:8080
+  - hostname: code.example.com
+    service: http://localhost:8818
+  - hostname: gpu.example.com
+    service: http://localhost:8808
+  - hostname: overleaf.example.com
+    service: http://localhost:51007
+  - hostname: resume.example.com
+    service: http://localhost:8820
+  - service: http_status:404
+
+no-autoupdate: true

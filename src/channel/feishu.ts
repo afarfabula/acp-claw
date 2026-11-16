@@ -1,8 +1,12 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
-import type { Channel, IncomingMessage } from '../types/channel.js';
 import type { FeishuChannelConfig } from '../config.js';
 import { loadFeishuConfigFromEnv } from '../config.js';
-import type { MessageBus, OutgoingMessage, OutgoingMessageResult } from '../types/messages.js';
+import type { Channel, IncomingMessage } from '../types/channel.js';
+import type {
+  MessageBus,
+  OutgoingMessage,
+  OutgoingMessageResult,
+} from '../types/messages.js';
 
 export interface FeishuMessage {
   id: string;
@@ -17,6 +21,36 @@ export interface FeishuMessage {
 export type MessageHandler = (message: FeishuMessage) => void | Promise<void>;
 
 const WORKING_EMOJI_TYPE = 'OnIt';
+
+/**
+ * Feishu card markdown does not reliably render long bare OAuth URLs as
+ * clickable links. Convert standalone/bare URLs to explicit markdown links,
+ * while leaving existing markdown links, angle-bracket links, and code alone.
+ */
+export function linkifyBareUrls(text: string): string {
+  let inFence = false;
+  return text
+    .split('\n')
+    .map((line) => {
+      if (/^\s*```/.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence) return line;
+      return line
+        .split(/(`[^`]*`)/g)
+        .map((part, index) => {
+          if (index % 2 === 1) return part;
+          return part.replace(
+            /(^|[\s：:])(https?:\/\/[^\s<>()]+)/g,
+            (_match, prefix: string, url: string) =>
+              `${prefix}[打开链接](${url})`,
+          );
+        })
+        .join('');
+    })
+    .join('\n');
+}
 
 /** 从消息内容里递归找出所有 image_key（兼容 image 单图与 post 富文本） */
 function extractImageKeys(content: string): string[] {
@@ -47,7 +81,9 @@ function extractImageKeys(content: string): string[] {
  * reply 会直接报 99992354，必须改走 chatId 直发。
  */
 function isOpenMessageId(id: string | undefined): id is string {
-  return typeof id === 'string' && (id.startsWith('om_') || id.startsWith('omt_'));
+  return (
+    typeof id === 'string' && (id.startsWith('om_') || id.startsWith('omt_'))
+  );
 }
 
 export class FeishuChannel implements Channel {
@@ -107,9 +143,7 @@ export class FeishuChannel implements Channel {
     messageId: string,
     content: string,
     limit = 4,
-  ): Promise<
-    Array<{ bytes: string; mimeType: string; name: string }>
-  > {
+  ): Promise<Array<{ bytes: string; mimeType: string; name: string }>> {
     const keys = extractImageKeys(content).slice(0, limit);
     if (!keys.length) return [];
     const files: Array<{ bytes: string; mimeType: string; name: string }> = [];
@@ -184,7 +218,9 @@ export class FeishuChannel implements Channel {
     }
   }
 
-  private async handleOutgoing(msg: OutgoingMessage): Promise<OutgoingMessageResult> {
+  private async handleOutgoing(
+    msg: OutgoingMessage,
+  ): Promise<OutgoingMessageResult> {
     try {
       if (msg.type === 'clear-reaction' && msg.messageId) {
         await this.clearReaction(msg.messageId);
@@ -205,7 +241,10 @@ export class FeishuChannel implements Channel {
       }
       return { success: false, error: 'No messageId or chatId provided' };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 
@@ -321,7 +360,9 @@ export class FeishuChannel implements Channel {
   }
 
   private wrapTextAsCard(text: string): unknown {
-    const normalized = text.replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+    const normalized = linkifyBareUrls(
+      text.replace(/\\n/g, '\n').replace(/\\t/g, '\t'),
+    );
     return {
       schema: '2.0',
       config: { update_multi: true },

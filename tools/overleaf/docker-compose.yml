@@ -1,0 +1,63 @@
+name: overleaf
+
+services:
+  sharelatex:
+    restart: unless-stopped
+    build:
+      context: .
+      args:
+        OVERLEAF_VERSION: ${OVERLEAF_VERSION:-6.3.1}
+    image: acp-claw/overleaf:${OVERLEAF_VERSION:-6.3.1}-texlive-full
+    container_name: acp-overleaf
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "${OVERLEAF_BIND_ADDRESS:-127.0.0.1}:${OVERLEAF_PORT:-51007}:80"
+    stop_grace_period: 60s
+    volumes:
+      - ${OVERLEAF_DATA_ROOT:-/home_ext/quyanyi/overleaf-data}/sharelatex:/var/lib/overleaf
+    environment:
+      OVERLEAF_APP_NAME: ${OVERLEAF_APP_NAME:-Overleaf}
+      OVERLEAF_NAV_TITLE: ${OVERLEAF_NAV_TITLE:-Overleaf}
+      OVERLEAF_SITE_URL: ${OVERLEAF_SITE_URL:-https://overleaf.afarfabula.org}
+      OVERLEAF_ADMIN_EMAIL: ${OVERLEAF_ADMIN_EMAIL:-quyanyi@example.com}
+      OVERLEAF_SESSION_SECRET: ${OVERLEAF_SESSION_SECRET:?set in .env}
+      OVERLEAF_INVITE_TOKEN_SECRET: ${OVERLEAF_INVITE_TOKEN_SECRET:?set in .env}
+      OVERLEAF_MONGO_URL: mongodb://mongo/sharelatex
+      OVERLEAF_REDIS_HOST: redis
+      REDIS_HOST: redis
+      OVERLEAF_SECURE_COOKIE: "true"
+      OVERLEAF_TRUSTED_PROXY_IPS: loopback
+      OVERLEAF_ALLOW_PUBLIC_ACCESS: "false"
+      OVERLEAF_RESTRICT_INVITES_TO_EXISTING_ACCOUNTS: "true"
+      OVERLEAF_DISABLE_LINK_SHARING: "true"
+      EMAIL_CONFIRMATION_DISABLED: "true"
+      ENABLED_LINKED_FILE_TYPES: project_file,project_output_file
+      ENABLE_CONVERSIONS: "true"
+
+  mongo:
+    restart: unless-stopped
+    image: mongo:8.0
+    container_name: acp-overleaf-mongo
+    command: --replSet overleaf --bind_ip_all
+    volumes:
+      - ${OVERLEAF_DATA_ROOT:-/home_ext/quyanyi/overleaf-data}/mongo:/data/db
+      - ./bin/shared/mongodb-init-replica-set.js:/docker-entrypoint-initdb.d/mongodb-init-replica-set.js:ro
+    environment:
+      MONGO_INITDB_DATABASE: sharelatex
+    healthcheck:
+      test: echo 'db.stats().ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  redis:
+    restart: unless-stopped
+    image: redis:6.2
+    container_name: acp-overleaf-redis
+    command: redis-server --bind 127.0.0.1 --appendonly yes
+    volumes:
+      - ${OVERLEAF_DATA_ROOT:-/home_ext/quyanyi/overleaf-data}/redis:/data

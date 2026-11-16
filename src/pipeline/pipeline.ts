@@ -75,6 +75,8 @@ export class PromptPipeline {
     // expectReplay=false（正常 prompt）：初始 true，消息直接通过
     let seenUserMessageEcho = !options?.expectReplay;
 
+    let flushTimer: ReturnType<typeof setTimeout> | undefined;
+
     // 独立发送队列 — 不阻塞 update 处理，按顺序并行发送
     let sendChain = Promise.resolve();
     const enqueueSend = (fn: () => void | Promise<void>) => {
@@ -86,6 +88,10 @@ export class PromptPipeline {
     };
 
     const flushText = () => {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = undefined;
+      }
       if (textBuffer.length > 0) {
         const chunk = textBuffer;
         textBuffer = '';
@@ -97,9 +103,28 @@ export class PromptPipeline {
       }
     };
 
+    // 有的适配器不保证每条消息都带 lastChunk，若只在 lastChunk / 工具事件
+    // 才 flush，会出现「回复已经生成但一直没发出去」。这里加一个空闲兜底：
+    // 文本 2.5 秒没有新增就自动 flush 出去。
+    const scheduleIdleFlush = () => {
+      if (flushTimer) clearTimeout(flushTimer);
+      flushTimer = setTimeout(() => {
+        flushTimer = undefined;
+        flushText();
+      }, 2500);
+    };
+
     const onUpdate = (update: SessionUpdate) => {
       // 详细流式日志 — 打印完整 update 到控制台
       console.log('[pipeline:stream]', JSON.stringify(update));
+      const isThreadActive =
+        update.sessionUpdate === 'session_info_update' &&
+        (update._meta?.codex?.threadStatus?.type === 'active' ||
+          update._meta?.codex?.threadStatus?.status === 'active');
+      const isLiveAgentText =
+        update.sessionUpdate === 'agent_message_chunk' &&
+        Boolean(update.content?.text) &&
+        update._meta?.type !== 'full';
 
       if (update.stopReason) {
         turnCompleted = true;
@@ -124,7 +149,26 @@ export class PromptPipeline {
 
       // 未看到任何 user echo 前，跳过（不应该发生，但作为安全守卫）
       if (!seenUserMessageEcho) {
-        return;
+        // Codex 0.164 恢复长会话时可能不再发送 user_message_chunk。
+        // active 状态或第一条实时 agent 文本都足以确认新回合已经开始；
+        // 历史 replay 仍由 _meta.type === "full" 过滤。
+        if (isThreadActive || isLiveAgentText) {
+          seenUserMessageEcho = true;
+        } else {
+          return;
+        }
+      }
+
+      // Codex 0.164 在部分长会话中会发出 idle 状态，却不返回
+      // session/prompt 响应。此时先把已生成文本发出去，避免最终答案
+      // 一直留在缓冲区；AcpClient 会随后结束卡住的 prompt 请求。
+      if (
+        update.sessionUpdate === 'session_info_update' &&
+        (update._meta?.codex?.threadStatus?.type === 'idle' ||
+          update._meta?.codex?.threadStatus?.status === 'idle')
+      ) {
+        turnCompleted = true;
+        flushText();
       }
 
       if (
@@ -143,6 +187,7 @@ export class PromptPipeline {
 
         // type=partial: 追加累积
         textBuffer += update.content.text;
+        scheduleIdleFlush();
 
         // lastChunk 标记当前消息结束，flush 并重置
         if (update._meta?.lastChunk) {
@@ -196,6 +241,10 @@ export class PromptPipeline {
     }
 
     // Flush remaining text + 等待发送队列排空
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = undefined;
+    }
     flushText();
     await sendChain;
 

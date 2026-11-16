@@ -4,7 +4,9 @@
   "freeThreshold": {
     "util": 5,
     "memGb": 5,
-    "consecutiveSamples": 6,
+    "minFreeCards": 4,
+    "consecutiveSamples": 40,
+    "recoverConsecutiveSamples": 40,
     "notifyRecovered": true
   },
   "server": {

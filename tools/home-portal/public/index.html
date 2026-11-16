@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ACP Claw · 统一门户</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #071018;
+        --panel: #0d1b27;
+        --panel-2: #102433;
+        --line: #1e3b4d;
+        --text: #e8f1f6;
+        --muted: #8aa4b5;
+        --accent: #4fd1c5;
+        --accent-2: #f6ad55;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 12% 8%, #103447 0, transparent 34rem),
+          radial-gradient(circle at 88% 18%, #2b2116 0, transparent 28rem),
+          var(--bg);
+        color: var(--text);
+        font-family: Inter, "Noto Sans SC", system-ui, sans-serif;
+      }
+      main { width: min(1120px, calc(100% - 40px)); margin: 0 auto; padding: 72px 0 64px; }
+      .eyebrow {
+        color: var(--accent);
+        font: 700 12px/1.4 ui-monospace, monospace;
+        letter-spacing: .18em;
+        text-transform: uppercase;
+      }
+      h1 { margin: 14px 0 12px; font-size: clamp(34px, 7vw, 64px); letter-spacing: -.045em; }
+      .lede { max-width: 760px; margin: 0 0 40px; color: var(--muted); font-size: 17px; line-height: 1.75; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; }
+      .card {
+        min-height: 210px;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        background: linear-gradient(150deg, var(--panel-2), var(--panel));
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        color: inherit;
+        text-decoration: none;
+        transition: transform .18s ease, border-color .18s ease, background .18s ease;
+      }
+      .card:hover { transform: translateY(-4px); border-color: var(--accent); }
+      .icon { font-size: 30px; line-height: 1; margin-bottom: 30px; }
+      h2 { margin: 0 0 8px; font-size: 21px; }
+      .card p { margin: 0; color: var(--muted); line-height: 1.65; }
+      .host {
+        margin-top: auto;
+        padding-top: 20px;
+        color: var(--accent);
+        font: 12px/1.5 ui-monospace, monospace;
+        word-break: break-all;
+      }
+      .card.ssh .host { color: var(--accent-2); }
+      footer { margin-top: 38px; color: #5e7a8b; font-size: 13px; }
+      code { color: #d9e8ef; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">afarfabula.org · local workspace</div>
+      <h1>一处抵达所有工作台</h1>
+      <p class="lede">
+        论文写作、代码编辑、GPU 资源与个人展示统一从这里进入。服务只在本机回环或 Cloudflare Tunnel 后面运行。
+      </p>
+
+      <section class="grid" aria-label="服务导航">
+        <a class="card" href="https://overleaf.afarfabula.org">
+          <div class="icon">Σ</div>
+          <h2>Overleaf</h2>
+          <p>私有 LaTeX 写作与 PDF 编译，预装全量 TeX Live。</p>
+          <div class="host">overleaf.afarfabula.org</div>
+        </a>
+
+        <a class="card" href="https://code.afarfabula.org">
+          <div class="icon">⌘</div>
+          <h2>Code Server</h2>
+          <p>浏览器中的开发环境，直接进入服务器工作目录。</p>
+          <div class="host">code.afarfabula.org</div>
+        </a>
+
+        <a class="card" href="https://3090gpu.afarfabula.org">
+          <div class="icon">▦</div>
+          <h2>GPU 表盘</h2>
+          <p>查看 8 张 RTX 3090 的利用率、显存、温度与占用趋势。</p>
+          <div class="host">3090gpu.afarfabula.org</div>
+        </a>
+
+        <a class="card" href="https://resume.afarfabula.org">
+          <div class="icon">◫</div>
+          <h2>实习展示</h2>
+          <p>个人实习经历与项目展示，使用访问密码保护。</p>
+          <div class="host">resume.afarfabula.org</div>
+        </a>
+
+        <a class="card ssh" href="ssh://quyanyi@121.48.163.38">
+          <div class="icon">⌁</div>
+          <h2>SSH 直连</h2>
+          <p>服务器运维入口。公网 SSH 隧道已停用，请通过内网直连。</p>
+          <div class="host">ssh quyanyi@121.48.163.38</div>
+        </a>
+      </section>
+
+      <footer>
+        运行状态可通过 <code>/health</code> 检查；配置和使用说明见
+        <code>~/acp-claw/tools/home-portal/README.md</code>。
+      </footer>
+    </main>
+  </body>
+</html>

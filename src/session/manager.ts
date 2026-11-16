@@ -70,7 +70,9 @@ export class SessionManager {
     // loadSession 期间：静默消费 replay（session 尚未创建，emit 为空操作）
     // prompt 期间：通过 prompt() 注册的独立 listener 路由到 pipeline
     client.on('session-update', (sessionId: string, update: SessionUpdate) => {
-      console.log(`[before loading session-update] sessionId：${sessionId} ${JSON.stringify(update)}`);
+      console.log(
+        `[before loading session-update] sessionId：${sessionId} ${JSON.stringify(update)}`,
+      );
       // 消费 replay events，防止 Node.js EventEmitter 警告
     });
 
@@ -312,7 +314,10 @@ export class SessionManager {
   startIdleSweeper(): void {
     const timeout = this.config.sessionIdleTimeoutMs ?? 30 * 60_000;
     if (this.idleSweeper) clearInterval(this.idleSweeper);
-    const interval = Math.max(60_000, Math.min(Math.floor(timeout / 4), 10 * 60_000));
+    const interval = Math.max(
+      60_000,
+      Math.min(Math.floor(timeout / 4), 10 * 60_000),
+    );
     this.idleSweeper = setInterval(() => {
       void this.sweepIdle(timeout);
     }, interval);

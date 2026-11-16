@@ -15,48 +15,9 @@ function section(title) {
   return `\n## ${title}\n`;
 }
 
-export function renderBrief(data, { timeZone = 'Asia/Shanghai' } = {}) {
-  const { meta, weather, balance, papers, infra, projects } = data;
+/** 只渲染论文素材，供完整日报和增量快报共用 */
+export function renderPapers(papers) {
   const out = [];
-
-  out.push(`# 日报素材 ${meta.stamp}（${timeZone}）`);
-  if (meta.failures?.length) {
-    out.push(`\n> 部分数据源采集失败：${meta.failures.join(' | ')}`);
-  }
-
-  // 1. 天气
-  out.push(section('1. 天气（未来 ' + (weather ? `${weather.rows.length}` : 0) + ' 小时）'));
-  if (!weather) {
-    out.push('采集失败');
-  } else {
-    out.push(`地点：${weather.name}（${weather.latitude}, ${weather.longitude}，海拔 ${weather.elevation}m）`);
-    const s = weather.summary;
-    out.push(
-      `汇总：${trim(s.conditions.join('/'), 60)}；气温 ${s.tempMin}~${s.tempMax}°C；` +
-        `降水概率最高 ${s.popMax}%（${s.popMaxAt}）；24h 累计降水 ${s.rainTotal}mm；日出 ${s.sunrise} 日落 ${s.sunset}`,
-    );
-    out.push('');
-    out.push('| 时刻 | 天气 | 气温 | 体感 | 降水概率 | 降水 | 风速 |');
-    out.push('|---|---|---|---|---|---|---|');
-    for (const r of weather.rows) {
-      out.push(
-        `| ${r.date.slice(5)} ${r.time} | ${describeWeatherCode(r.code)} | ${r.temp}°C | ${r.feels}°C | ${r.pop}% | ${r.precip}mm | ${r.wind}km/h |`,
-      );
-    }
-  }
-
-  // 2. 余额
-  out.push(section('2. DeepSeek API 余额'));
-  if (!balance) {
-    out.push('采集失败');
-  } else {
-    out.push(
-      `${balance.label}：可用=${balance.available ? '是' : '否'}，余额 ${balance.total} ${balance.currency}` +
-        `（充值 ${balance.toppedUp}，赠送 ${balance.granted}）`,
-    );
-  }
-
-  // 3. 论文（最新 + 最热）
   const heatText = (p) => {
     const h = p.heat ?? {};
     const parts = [];
@@ -101,6 +62,52 @@ export function renderBrief(data, { timeZone = 'Asia/Shanghai' } = {}) {
     }
   }
   out.push(`\n（最新 ${paperCount} 篇 ／ 最热 ${hotCount} 篇）`);
+  return out.join('\n');
+}
+
+export function renderBrief(data, { timeZone = 'Asia/Shanghai' } = {}) {
+  const { meta, weather, balance, papers, infra, projects } = data;
+  const out = [];
+
+  out.push(`# 日报素材 ${meta.stamp}（${timeZone}）`);
+  if (meta.failures?.length) {
+    out.push(`\n> 部分数据源采集失败：${meta.failures.join(' | ')}`);
+  }
+
+  // 1. 天气
+  out.push(section('1. 天气（未来 ' + (weather ? `${weather.rows.length}` : 0) + ' 小时）'));
+  if (!weather) {
+    out.push('采集失败');
+  } else {
+    out.push(`地点：${weather.name}（${weather.latitude}, ${weather.longitude}，海拔 ${weather.elevation}m）`);
+    const s = weather.summary;
+    out.push(
+      `汇总：${trim(s.conditions.join('/'), 60)}；气温 ${s.tempMin}~${s.tempMax}°C；` +
+        `降水概率最高 ${s.popMax}%（${s.popMaxAt}）；24h 累计降水 ${s.rainTotal}mm；日出 ${s.sunrise} 日落 ${s.sunset}`,
+    );
+    out.push('');
+    out.push('| 时刻 | 天气 | 气温 | 体感 | 降水概率 | 降水 | 风速 |');
+    out.push('|---|---|---|---|---|---|---|');
+    for (const r of weather.rows) {
+      out.push(
+        `| ${r.date.slice(5)} ${r.time} | ${describeWeatherCode(r.code)} | ${r.temp}°C | ${r.feels}°C | ${r.pop}% | ${r.precip}mm | ${r.wind}km/h |`,
+      );
+    }
+  }
+
+  // 2. 余额
+  out.push(section('2. DeepSeek API 余额'));
+  if (!balance) {
+    out.push('采集失败');
+  } else {
+    out.push(
+      `${balance.label}：可用=${balance.available ? '是' : '否'}，余额 ${balance.total} ${balance.currency}` +
+        `（充值 ${balance.toppedUp}，赠送 ${balance.granted}）`,
+    );
+  }
+
+  // 3. 论文（最新 + 最热）
+  out.push(renderPapers(papers));
 
   // 4. HF 热榜
   out.push(section(`4. HF Daily Papers 热榜（近 ${papers?.hfDays ?? 1} 天，按社区点赞）`));
@@ -203,7 +210,7 @@ export function renderNews(data, { timeZone = 'Asia/Shanghai' } = {}) {
 }
 
 /** 学校/学院通知素材：按「关注分类」分组，新增优先，噪音只统计条数 */
-export function renderSchool(data, { timeZone = 'Asia/Shanghai' } = {}) {
+export function renderSchool(data, { timeZone = 'Asia/Shanghai', includeOld = true } = {}) {
   const out = [];
   const stamp = data.stamp ?? '';
   out.push(`# 学校通知素材 ${stamp}（${timeZone}）`);
@@ -249,7 +256,9 @@ export function renderSchool(data, { timeZone = 'Asia/Shanghai' } = {}) {
     }
   }
 
-  const oldOnes = (data.items ?? []).filter((it) => !it.isNew && !it.noise);
+  const oldOnes = includeOld
+    ? (data.items ?? []).filter((it) => !it.isNew && !it.noise)
+    : [];
   if (oldOnes.length) {
     out.push(`\n## 窗口内已报过的条目（${oldOnes.length} 条，仅供去重参考）`);
     for (const it of oldOnes.slice(0, 20)) {

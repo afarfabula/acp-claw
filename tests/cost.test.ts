@@ -8,18 +8,25 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from '@rstest/core';
-
+import {
+  formatReset,
+  periodLabel,
+  renderQuotaLine,
+} from '../src/cost/plan-quota';
 import {
   costOfTurn,
   formatCny,
+  formatTokens,
   isPeak,
   resolveModel,
 } from '../src/cost/pricing';
+import { laneOfModel, laneRules } from '../src/cost/router-lane';
 import {
   codexHomeDir,
   computeRoundCost,
   findRolloutFile,
   formatCostLine,
+  formatDuration,
 } from '../src/cost/session-cost';
 // 参考实现：工作区工具 tools/codex-cost（状态栏用的同一套算法）
 import {
@@ -107,6 +114,70 @@ describe('pricing', () => {
     expect(formatCny(123.4)).toBe('¥123.4');
     expect(formatCny(0.0042)).toBe('¥0.0042');
   });
+
+  it('耗时按 秒 / 分 / 小时 自适应', () => {
+    expect(formatDuration(0)).toBe('<1s');
+    expect(formatDuration(42_000)).toBe('42s');
+    expect(formatDuration(192_000)).toBe('3m12s');
+    expect(formatDuration(180_000)).toBe('3m');
+    expect(formatDuration(3_900_000)).toBe('1h05m');
+    expect(formatDuration(null)).toBeNull();
+  });
+
+  it('token 数简写与套餐周期标签', () => {
+    expect(formatTokens(996)).toBe('996');
+    expect(formatTokens(57_000)).toBe('57k');
+    expect(formatTokens(1_234_567)).toBe('1.2M');
+    expect(periodLabel('session')).toBe('5小时');
+    expect(periodLabel('weekly')).toBe('本周');
+    expect(periodLabel('monthly')).toBe('本月');
+    expect(periodLabel('whatever')).toBe('whatever');
+  });
+
+  it('模型名按 dsapi- 前缀分车道（与路由网关同规则）', () => {
+    const rules = laneRules();
+    expect(laneOfModel('dsapi-deepseek-flash', rules)).toBe('deepseek');
+    expect(laneOfModel('doubao-seed-2.1-lite', rules)).toBe('plan');
+    expect(laneOfModel('deepseek-v4.1-flash', rules)).toBe('plan');
+    expect(laneOfModel(null, rules)).toBe('plan');
+  });
+
+  it('套餐额度行只给百分比和重置时间', () => {
+    const now = new Date('2026-10-14T08:00:00Z'); // 北京 16:00
+    expect(formatReset('2026-10-14T10:00:00+08:00', now)).toBe('10:00');
+    expect(formatReset('2026-10-19T00:00:00+08:00', now)).toBe('10-19 00:00');
+    expect(
+      renderQuotaLine({
+        ok: true,
+        error: null,
+        fetchedAt: new Date().toISOString(),
+        periods: [
+          {
+            label: 'session',
+            used: null,
+            total: null,
+            percent: 0,
+            resetAt: null,
+          },
+          {
+            label: 'weekly',
+            used: null,
+            total: null,
+            percent: 10.53,
+            resetAt: '2026-10-19T00:00:00+08:00',
+          },
+        ],
+      }),
+    ).toBe('套餐 5小时 剩 100% · 本周 剩 89%（10-19 00:00 重置）');
+    expect(
+      renderQuotaLine({
+        ok: false,
+        error: 'boom',
+        periods: [],
+        fetchedAt: new Date().toISOString(),
+      }),
+    ).toBeNull();
+  });
 });
 
 describe('session-cost', () => {
@@ -138,7 +209,7 @@ describe('session-cost', () => {
       `2026-09-16T0${h}:${String(m).padStart(2, '0')}:00.000Z`;
     writeFileSync(
       file,
-      turnContext(t(1, 0), 'deepseek-flash') +
+      turnContext(t(1, 0), 'dsapi-deepseek-flash') +
         // 上一个回合：1 次请求，1M 未命中输入 = ¥2
         taskStarted(t(1, 1)) +
         tokenCount(t(1, 2), { input: 1_000_000, cached: 0, output: 0 }) +
@@ -184,7 +255,7 @@ describe('session-cost', () => {
       `2026-09-16T02:${String(m).padStart(2, '0')}:00.000Z`;
     writeFileSync(
       file,
-      turnContext(t(0), 'deepseek-flash') +
+      turnContext(t(0), 'dsapi-deepseek-flash') +
         taskStarted(t(1)) +
         tokenCount(t(2), { input: 1_000_000, cached: 0, output: 0 }),
     );
@@ -211,7 +282,7 @@ describe('session-cost', () => {
     const later = '2026-09-16T02:01:00.000Z';
     writeFileSync(
       file,
-      turnContext(peak, 'deepseek-flash') +
+      turnContext(peak, 'dsapi-deepseek-flash') +
         tokenCount(peak, { input: 1_000_000, cached: 0, output: 0 }) +
         tokenCount(later, { input: 100_000, cached: 100_000, output: 0 }),
     );
@@ -226,7 +297,7 @@ describe('session-cost', () => {
   it('空文件 / 无请求时返回 null', () => {
     writeFileSync(
       file,
-      turnContext('2026-09-16T02:00:00.000Z', 'deepseek-flash'),
+      turnContext('2026-09-16T02:00:00.000Z', 'dsapi-deepseek-flash'),
     );
     expect(computeRoundCost(file)).toBeNull();
   });
@@ -236,7 +307,7 @@ describe('session-cost', () => {
       `2026-09-16T0${h}:${String(m).padStart(2, '0')}:00.000Z`;
     writeFileSync(
       file,
-      turnContext(t(1, 0), 'deepseek-flash') +
+      turnContext(t(1, 0), 'dsapi-deepseek-flash') +
         taskStarted(t(1, 1)) +
         tokenCount(t(1, 2), { input: 500_000, cached: 499_000, output: 500 }) +
         taskStarted(t(2, 40)) +
@@ -295,5 +366,66 @@ describe('session-cost', () => {
         `[cost] ${real}\n[cost] ${formatCostLine(cost as NonNullable<typeof cost>)}`,
       );
     }
+  });
+
+  it('Coding Plan 车道：不报人民币，显示请求数 / token 与套餐额度', () => {
+    const t = (h: number, m: number) =>
+      `2026-09-16T0${h}:${String(m).padStart(2, '0')}:00.000Z`;
+    writeFileSync(
+      file,
+      turnContext(t(1, 0), 'doubao-seed-2.1-lite') +
+        taskStarted(t(1, 1)) +
+        tokenCount(t(1, 2), { input: 200_000, cached: 198_000, output: 1_000 }),
+    );
+    const cost = computeRoundCost(file);
+    expect(cost?.lane).toBe('plan');
+    expect(cost?.modelRaw).toBe('doubao-seed-2.1-lite');
+
+    const text = formatCostLine(cost as NonNullable<typeof cost>, {
+      elapsedMs: 192_000,
+      quotaLine: '套餐 本周 剩 90%（10-19 00:00 重置）',
+    });
+    expect(text).toContain('走 Coding Plan');
+    expect(text).toContain('doubao-seed-2.1-lite');
+    expect(text).toContain('1 次请求');
+    expect(text).toContain('耗时 3m12s');
+    expect(text).toContain('会话累计');
+    expect(text).toContain('套餐 本周 剩 90%');
+    expect(text).not.toContain('¥');
+
+    // 额度查询失败时降级成纯 token 行
+    const fallback = formatCostLine(cost as NonNullable<typeof cost>);
+    expect(fallback).not.toContain('套餐');
+    expect(fallback).not.toContain('耗时');
+    expect(fallback).toContain('输入');
+  });
+
+  it('DeepSeek 车道：带上耗时与官网余额', () => {
+    const t = (h: number, m: number) =>
+      `2026-09-16T0${h}:${String(m).padStart(2, '0')}:00.000Z`;
+    writeFileSync(
+      file,
+      turnContext(t(1, 0), 'dsapi-deepseek-flash') +
+        taskStarted(t(1, 1)) +
+        tokenCount(t(1, 2), {
+          input: 200_000,
+          cached: 198_000,
+          output: 1_000,
+        }),
+    );
+    const cost = computeRoundCost(file);
+    expect(cost?.lane).toBe('deepseek');
+    const text = formatCostLine(cost as NonNullable<typeof cost>, {
+      elapsedMs: 42_000,
+      balanceLine: '💰 余额 ¥43.21',
+    });
+    expect(text).toContain('本回合 ¥');
+    expect(text).toContain('耗时 42s');
+    expect(text).toContain('会话累计');
+    expect(text).toContain('余额 ¥43.21');
+    // 没耗时 / 余额时保持原来的样子
+    const plain = formatCostLine(cost as NonNullable<typeof cost>);
+    expect(plain).not.toContain('耗时');
+    expect(plain).not.toContain('余额');
   });
 });

@@ -7,6 +7,16 @@
  *   node cli.mjs school [--json] [--days N] [--all]  采集学校/学院通知（信通学院+研究生院+学工部）
  *                                                    → data/<date>-school.json + <date>-school.md
  *                                                    （默认只标「新增」并记录已读；--all 忽略已读且不回写，--no-detail 不抓正文）
+ *   node cli.mjs brief [--mode auto|full|delta]       一次跑完日报素材；auto 在 07 点完整、12/18 点增量
+ *                    [--send-chat <chatId>]             增量只保留未报过的新闻/论文，学校/邮件本身增量
+ *                    [--out-dir <dir>] [--json]        完整模式默认生成并发送昨日账单饼图
+ *   node cli.mjs seed-seen [--news <json>] [--papers <json>]
+ *                                                    用已有日报素材初始化新闻/论文已报状态（上线迁移用）
+ *   node cli.mjs mail [--json] [--details N]         汇总上次日报以来的 163 新邮件 → data/<date>-mail-<time>.json
+ *   node cli.mjs bill [--json] [--daily-chart] [--date YYYY-MM-DD]
+ *                    [--send-chat <chatId> | --send-open-id <openId>]
+ *                                                    汇总昨日/本月账单；--daily-chart 才生成昨日饼图并发送
+ *                                                    图片发送后立即删除临时文件
  *   node cli.mjs jobs [--json] [--all] [--city 成都] [--keyword "大模型,推理"] [--publish] [--doc <url|id>]
  *                    [--search-mode shadow|augment] [--no-search] [--no-semantic]
  *                                                    采集技术实习岗位（默认成都、技术岗、日薪≥200）
@@ -50,12 +60,20 @@ import {
   collectProjects,
   collectWeather,
 } from './collect.mjs';
-import { renderBrief, renderJobs, renderNews, renderSchool } from './render.mjs';
+import {
+  renderBrief,
+  renderJobs,
+  renderNews,
+  renderPapers,
+  renderSchool,
+} from './render.mjs';
 import { collectJobs, DEFAULT_DOC_SECTIONS, pickForPublish, renderJobsPublishMarkdown } from './jobs.mjs';
 import { renderJobsWeb } from './jobs-web.mjs';
 import { deployJobsWeb, generateWebPassword } from './jobs-deploy.mjs';
 import { collectNews } from './news.mjs';
 import { collectSchool } from './school.mjs';
+import { collectMailDigest } from './mail.mjs';
+import { collectBillReport } from './bill.mjs';
 import { fetchAffiliation } from './affil.mjs';
 import {
   listComments,
@@ -123,13 +141,7 @@ async function cmdCollect(flags) {
   const { config: cfg, path: cfgPath, missing } = loadConfig();
   if (missing) console.error(`⚠️  未找到运行时配置 ${cfgPath}，使用仓库示例配置`);
   const failures = [];
-  const [weather, balance, papers, infra, projects] = await Promise.all([
-    collectWeather(cfg, failures),
-    collectBalance(cfg, failures),
-    collectPapers(cfg, failures),
-    collectInfra(cfg, failures),
-    collectProjects(cfg, failures),
-  ]);
+  const { weather, balance, papers, infra, projects } = await collectCoreData(cfg, failures);
   const parts = localParts(new Date(), cfg.timezone);
   const data = {
     meta: {
@@ -157,6 +169,45 @@ async function cmdCollect(flags) {
     process.stderr.write(`\n[collect] 素材已写入 ${briefPath} / ${jsonPath}\n`);
   }
   if (failures.length) process.stderr.write(`[collect] 失败项: ${failures.join(' | ')}\n`);
+}
+
+async function collectCoreData(cfg, failures) {
+  const [weather, balance, papers, infra, projects] = await Promise.all([
+    collectWeather(cfg, failures),
+    collectBalance(cfg, failures),
+    collectPapers(cfg, failures),
+    collectInfra(cfg, failures),
+    collectProjects(cfg, failures),
+  ]);
+  return { weather, balance, papers, infra, projects };
+}
+
+async function cmdMail(flags) {
+  const { config: cfg } = loadConfig();
+  const result = await collectMailDigest(cfg, flags);
+  if (flags.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${result.markdown}\n`);
+    process.stderr.write(`[mail] data=${result.jsonPath}\n`);
+  }
+}
+
+async function cmdBill(flags) {
+  const { config: cfg } = loadConfig();
+  const result = await collectBillReport(cfg, flags);
+  if (flags.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${result.markdown}\n`);
+    process.stderr.write(
+      `[bill] chart=${result.chartGenerated ? 'generated' : 'off'}` +
+      ` sent=${result.chartSent} deleted=${result.chartDeleted} data=${result.jsonPath}\n`,
+    );
+    if (result.chartError) {
+      process.stderr.write(`[bill] 图片处理失败: ${result.chartError}\n`);
+    }
+  }
 }
 
 async function cmdPublish(flags) {
@@ -619,6 +670,273 @@ async function cmdSchool(flags) {
   if (failures.length) process.stderr.write(`[school] 失败项: ${failures.join(' | ')}\n`);
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+async function safeCollect(name, failures, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    failures.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+function seenKey(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, '')
+    .slice(0, 100);
+}
+
+function pruneSeen(seen, keepDays = 30) {
+  const cutoff = Date.now() - keepDays * DAY_MS;
+  for (const [key, value] of Object.entries(seen)) {
+    const ts = Date.parse(value);
+    if (Number.isNaN(ts) || ts < cutoff) delete seen[key];
+  }
+  return seen;
+}
+
+function paperKey(paper) {
+  const id = String(paper?.id ?? paper?.url ?? '').match(/(\d{4}\.\d{4,5})/)?.[1];
+  return id ?? seenKey(paper?.title);
+}
+
+function newsKey(item) {
+  return seenKey(item?.title || item?.link);
+}
+
+function markNewsAndPapers(state, news, papers) {
+  const now = new Date().toISOString();
+  state.news ??= {};
+  state.news.seen ??= {};
+  state.papers ??= {};
+  state.papers.seen ??= {};
+  for (const item of news?.items ?? []) {
+    const key = newsKey(item);
+    if (key) state.news.seen[key] = now;
+  }
+  for (const topic of papers?.topics ?? []) {
+    for (const paper of [...(topic.items ?? []), ...(topic.hot ?? [])]) {
+      const key = paperKey(paper);
+      if (key) state.papers.seen[key] = now;
+    }
+  }
+  pruneSeen(state.news.seen, 30);
+  pruneSeen(state.papers.seen, 30);
+  state.news.lastRun = now;
+  state.papers.lastRun = now;
+}
+
+function filterNewPapers(papers, seen, incremental) {
+  if (!papers) return null;
+  const seenSet = new Set(Object.keys(seen ?? {}));
+  const take = (items) => (incremental
+    ? (items ?? []).filter((paper) => !seenSet.has(paperKey(paper)))
+    : (items ?? []));
+  return {
+    ...papers,
+    topics: (papers.topics ?? []).map((topic) => ({
+      ...topic,
+      items: take(topic.items),
+      hot: take(topic.hot),
+    })),
+  };
+}
+
+function filterNewNews(news, seen, incremental) {
+  if (!news || !incremental) return news;
+  const seenSet = new Set(Object.keys(seen ?? {}));
+  return {
+    ...news,
+    items: (news.items ?? []).filter((item) => !seenSet.has(newsKey(item))),
+  };
+}
+
+function paperCounts(papers) {
+  let latest = 0;
+  let hot = 0;
+  for (const topic of papers?.topics ?? []) {
+    latest += topic.items?.length ?? 0;
+    hot += topic.hot?.length ?? 0;
+  }
+  return { latest, hot };
+}
+
+/**
+ * 一次采集完整日报或增量快报所需素材。
+ *   brief [--mode auto|full|delta] [--send-chat <chatId>] [--out-dir <dir>] [--json]
+ *
+ * auto：07 点完整，其余时段增量。完整模式包含天气/余额/账单/Infra/项目；
+ * 增量模式只抓论文、新闻、学校通知和新邮件，并用 state.json 过滤已报内容。
+ */
+async function cmdBrief(flags) {
+  const { config: cfg, missing } = loadConfig();
+  if (missing) console.error('⚠️  未找到运行时配置，使用仓库示例配置');
+  const parts = localParts(new Date(), cfg.timezone);
+  const requested = typeof flags.mode === 'string' ? flags.mode : 'auto';
+  if (!['auto', 'full', 'delta'].includes(requested)) {
+    throw new Error('--mode 必须是 auto、full 或 delta');
+  }
+  const mode = requested === 'auto'
+    ? (Number(parts.time.slice(0, 2)) < 10 ? 'full' : 'delta')
+    : requested;
+  const incremental = mode === 'delta';
+  const failures = [];
+
+  let core = null;
+  let news = null;
+  let bill = null;
+  if (mode === 'full') {
+    const [coreResult, newsResult, billResult] = await Promise.all([
+      safeCollect('综合采集', failures, () => collectCoreData(cfg, failures)),
+      safeCollect('AI 新闻', failures, () => collectNews(cfg, failures)),
+      safeCollect('账单', failures, () => collectBillReport(cfg, {
+        ...flags,
+        'daily-chart': flags['no-bill-chart'] ? false : true,
+        'send-chat': typeof flags['send-chat'] === 'string' ? flags['send-chat'] : undefined,
+      })),
+    ]);
+    core = coreResult;
+    news = newsResult;
+    bill = billResult;
+  } else {
+    const [papersResult, newsResult] = await Promise.all([
+      safeCollect('论文', failures, () => collectPapers(cfg, failures)),
+      safeCollect('AI 新闻', failures, () => collectNews(cfg, failures)),
+    ]);
+    core = papersResult ? { papers: papersResult } : null;
+    news = newsResult;
+  }
+
+  // school/mail 都会读写 state.json，串行执行以避免并发覆盖。
+  const school = await safeCollect('学校通知', failures, () => collectSchool(cfg, failures, {
+    markSeen: true,
+  }));
+  if (school) school.stamp = parts.stamp;
+  const mail = await safeCollect('邮箱', failures, () => collectMailDigest(cfg, {}));
+
+  const state = readState();
+  const filteredNews = filterNewNews(news, state.news?.seen, incremental);
+  const filteredPapers = filterNewPapers(core?.papers, state.papers?.seen, incremental);
+  if (core && filteredPapers) core.papers = filteredPapers;
+  markNewsAndPapers(state, news, core?.papers);
+  writeState(state);
+
+  const dataDir = typeof flags['out-dir'] === 'string'
+    ? expandHome(flags['out-dir'])
+    : resolveDataDir(cfg);
+  mkdirSync(dataDir, { recursive: true });
+  const stamp = parts.time.replace(':', '');
+  const markdownPath = join(dataDir, `digest-${parts.date}-${stamp}-${mode}.md`);
+  const jsonPath = join(dataDir, `digest-${parts.date}-${stamp}-${mode}.json`);
+
+  const paperStats = paperCounts(filteredPapers);
+  const available = {
+    weather: Boolean(core?.weather),
+    school: (school?.newItems ?? []).filter((item) => !item.noise).length,
+    mail: (mail?.details ?? []).length,
+    bill: Boolean(bill),
+    news: filteredNews?.items?.length ?? 0,
+    balance: Boolean(core?.balance),
+    papersLatest: paperStats.latest,
+    papersHot: paperStats.hot,
+    infra: Boolean((core?.infra?.releases?.length ?? 0) || (core?.infra?.trending?.length ?? 0)),
+    projects: Boolean(
+      (core?.projects?.local ?? []).some((project) => project.commits?.length)
+      || (core?.projects?.github ?? []).some((project) => project.commits?.length),
+    ),
+  };
+
+  const material = [
+    `# 每日简报素材 ${parts.stamp}（${mode === 'full' ? '完整日报' : '增量快报'}）`,
+    '',
+    `模式：${mode} ｜ 采集失败：${failures.length}`,
+    `可直接使用的栏目：${Object.entries(available)
+      .filter(([, value]) => Boolean(value))
+      .map(([key, value]) => `${key}=${typeof value === 'number' ? value : 'yes'}`)
+      .join(' / ') || '无'}`,
+    '',
+    '> 只把有实质内容的栏目写进简报；值为 0 或没有变化的栏目直接省略，不要写“无新增/无变化”占位。',
+  ];
+
+  if (mode === 'full' && core) {
+    const fullData = {
+      meta: { ...parts, timezone: cfg.timezone, generatedAt: new Date().toISOString(), failures },
+      ...core,
+    };
+    material.push('', renderBrief(fullData, { timeZone: cfg.timezone }));
+  } else if (filteredPapers) {
+    material.push('', renderPapers(filteredPapers));
+  }
+  if (school) material.push('', renderSchool(school, { timeZone: cfg.timezone, includeOld: false }));
+  if (mail?.markdown) material.push('', mail.markdown);
+  if (bill?.markdown) material.push('', bill.markdown);
+  if (filteredNews) material.push('', renderNews(filteredNews, { timeZone: cfg.timezone }));
+
+  const markdown = `${material.join('\n')}\n`;
+  writeFileSync(markdownPath, markdown, 'utf-8');
+  const manifest = {
+    mode,
+    generatedAt: new Date().toISOString(),
+    stamp: parts.stamp,
+    markdownPath,
+    available,
+    failures,
+    bill: bill
+      ? {
+          chartGenerated: bill.chartGenerated,
+          chartSent: bill.chartSent,
+          chartError: bill.chartError,
+        }
+      : null,
+    school: school?.summary ?? null,
+    mail: mail
+      ? { newCount: mail.newCount, unreadCount: mail.unreadCount }
+      : null,
+    news: filteredNews?.items?.length ?? 0,
+    papers: paperStats,
+  };
+  writeFileSync(jsonPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+
+  if (flags.json) {
+    process.stdout.write(`${JSON.stringify({ jsonPath, ...manifest }, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${markdown}\n`);
+    process.stderr.write(`\n[brief] 素材已写入 ${markdownPath} / ${jsonPath}\n`);
+  }
+  if (failures.length) process.stderr.write(`[brief] 失败项: ${failures.join(' | ')}\n`);
+}
+
+async function cmdSeedSeen(flags) {
+  const { config: cfg } = loadConfig();
+  const parts = localParts(new Date(), cfg.timezone);
+  const dataDir = resolveDataDir(cfg);
+  const newsPath = typeof flags.news === 'string'
+    ? expandHome(flags.news)
+    : join(dataDir, `${parts.date}-news.json`);
+  const papersPath = typeof flags.papers === 'string'
+    ? expandHome(flags.papers)
+    : join(dataDir, `${parts.date}.json`);
+  const news = JSON.parse(readFileSync(newsPath, 'utf-8'));
+  const source = JSON.parse(readFileSync(papersPath, 'utf-8'));
+  const state = readState();
+  markNewsAndPapers(state, news, source.papers ?? source);
+  writeState(state);
+  const result = {
+    newsPath,
+    papersPath,
+    news: news.items?.length ?? 0,
+    papers: paperCounts(source.papers ?? source),
+  };
+  if (flags.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  else {
+    process.stdout.write(
+      `已初始化去重状态：新闻 ${result.news} 条，论文 最新 ${result.papers.latest} / 最热 ${result.papers.hot}\n`,
+    );
+  }
+}
+
 /** 读取文档的根级子块（用用户身份直连 docx API，拿到准确的插入下标） */
 async function docRootChildren(docId) {
   const { getAccessToken } = await import('../feishu-doc/auth.mjs');
@@ -825,8 +1143,12 @@ async function cmdJobs(flags) {
 
 const COMMANDS = {
   collect: cmdCollect,
+  brief: cmdBrief,
+  'seed-seen': cmdSeedSeen,
   news: cmdNews,
   school: cmdSchool,
+  mail: cmdMail,
+  bill: cmdBill,
   jobs: cmdJobs,
   affil: cmdAffil,
   comments: cmdComments,

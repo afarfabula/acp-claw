@@ -60,6 +60,19 @@ export interface AcpClawConfig {
     /** 会话记录根目录，默认取 $CODEX_HOME 或 ~/.codex */
     codexHome?: string;
   };
+  /**
+   * 长任务进度提示：一个回合跑得久了，每隔一段时间自动发一条「⏳ 进行中 … ·
+   * 最近：<当前动作>」，避免用户长时间看不到任何反馈。默认开启，仅飞书通道。
+   */
+  progress?: {
+    enabled?: boolean;
+    /** 回合超过这个时长才开始发进度（默认 30 秒） */
+    afterMs?: number;
+    /** 两条进度之间的最小间隔（默认 60 秒） */
+    intervalMs?: number;
+    /** 生效通道，默认 ['feishu'] */
+    channels?: string[];
+  };
   reflexion?: {
     enabled: boolean;
     promptTemplate?: string;
@@ -130,6 +143,7 @@ export function loadConfig(workDir: string): AcpClawConfig {
         parsed.stateSaveIntervalMs ?? DEFAULT_CONFIG.stateSaveIntervalMs,
       language: parsed.language ?? 'zh',
       replyCost: parsed.replyCost,
+      progress: parsed.progress,
       reflexion: parsed.reflexion,
     };
   } catch {
