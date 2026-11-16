@@ -1,0 +1,16 @@
+[Unit]
+Description=ACP Claw virtual Chrome noVNC web bridge
+After=server-chrome-vnc.service
+Requires=server-chrome-vnc.service
+PartOf=server-chrome-vnc.service
+
+[Service]
+Type=simple
+Environment=SERVER_CHROME_HOME=/home_ext/quyanyi/server-chrome
+WorkingDirectory=/home_ext/quyanyi/acp-claw/tools/server-browser
+ExecStart=/home_ext/quyanyi/acp-claw/tools/server-browser/start-novnc.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

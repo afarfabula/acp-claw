@@ -1,0 +1,15 @@
+[Unit]
+Description=ACP Claw virtual Chrome Xvfb display
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=SERVER_CHROME_HOME=/home_ext/quyanyi/server-chrome
+WorkingDirectory=/home_ext/quyanyi/acp-claw/tools/server-browser
+ExecStart=/home_ext/quyanyi/acp-claw/tools/server-browser/start-xvfb.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -10,8 +10,8 @@ ingress:
     service: http://localhost:8808
   - hostname: overleaf.example.com
     service: http://localhost:51007
-  - hostname: resume.example.com
-    service: http://localhost:8820
+  - hostname: browser.example.com
+    service: http://localhost:6080
   - service: http_status:404
 
 no-autoupdate: true

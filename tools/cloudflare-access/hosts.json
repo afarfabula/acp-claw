@@ -1,0 +1,12 @@
+{
+  "application": "ACP Claw Unified",
+  "teamDomain": "qyyyyq.cloudflareaccess.com",
+  "sessionDuration": "1 month",
+  "hosts": [
+    "home.afarfabula.org",
+    "code.afarfabula.org",
+    "3090gpu.afarfabula.org",
+    "overleaf.afarfabula.org",
+    "browser.afarfabula.org"
+  ]
+}

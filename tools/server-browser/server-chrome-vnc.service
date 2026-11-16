@@ -1,0 +1,18 @@
+[Unit]
+Description=ACP Claw virtual Chrome x11vnc server
+After=server-chrome-xvfb.service
+Requires=server-chrome-xvfb.service
+PartOf=server-chrome-xvfb.service
+
+[Service]
+Type=simple
+Environment=SERVER_CHROME_HOME=/home_ext/quyanyi/server-chrome
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+WorkingDirectory=/home_ext/quyanyi/acp-claw/tools/server-browser
+ExecStart=/home_ext/quyanyi/acp-claw/tools/server-browser/start-vnc.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

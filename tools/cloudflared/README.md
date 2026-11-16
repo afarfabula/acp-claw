@@ -19,7 +19,10 @@ cp config.example.yml config.yml
 | `code.example.com` | `127.0.0.1:8818` |
 | `gpu.example.com` | `127.0.0.1:8808` |
 | `overleaf.example.com` | `127.0.0.1:51007` |
-| `resume.example.com` | `127.0.0.1:8820` |
+| `browser.example.com` | `127.0.0.1:6080` |
+
+所有公开个人站点由同一个 Cloudflare Access 多域名应用保护。Access
+配置不属于 tunnel ingress，必须单独在 Zero Trust 中维护。
 
 ## 部署
 
