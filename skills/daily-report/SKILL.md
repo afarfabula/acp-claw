@@ -50,6 +50,12 @@ node $CLI bill --daily-chart --date 2026-10-27 --json
 node $CLI comments                   # 列 Paper Reading 文档的批注，标出「还没处理过」的（增量，默认用 config 里的 docId）
 node $CLI comments --doc <url>       # 指定别的文档；--rebuild 重建基线（把现有批注全当已读）
 node $CLI reply <doc> <commentId> --text "回答"   # 在批注里回复（默认同时标记「已解决」，并记住进度）
+node $CLI jobs-xhs-push [--all] [--dry-run] [--json]
+                                     # 小红书技术实习：只保留 base 成都或正文明确 remote 的帖子，
+                                     # 方向限定大模型/Agent、具身智能、AI Infra，
+                                     # 排除内容/商务/运营/产品等非技术岗，
+                                     # 优先字节/腾讯/京东/阿里/商汤/OPPO；
+                                     # 同时抽取大厂面经题目、更新飞书题库并经 Webhook 推送摘要
 node $CLI affil 2606.05688           # 查论文的完成单位（机构/团队）与作者
 node $CLI paper 2606.05688           # 抓论文写文档素材（摘要/章节/图表图注+图片/完成单位）
 node $CLI paperdoc --spec <json> --enrich <materials.json> [--check] [--publish --name <标题>]
@@ -76,6 +82,9 @@ acp-claw cron add --name 每日简报 --schedule "0 7,12,18 * * *" \
 acp-claw cron add --name 实习岗位网页 --schedule "30 18 * * *" \
   --chat-id <群 chat_id> --fresh-session \
   --prompt "只运行 node <CLI> jobs --web --json，更新岗位网页并回复一行摘要。"
+
+acp-claw cron add --name 实习机会推送 --schedule "40 18 * * *" --fresh-session \
+  --prompt "只运行 node <CLI> jobs-xhs-push --json；该命令自行通过 Webhook 推送新增岗位。不要修改日报或岗位网页，不发送思考过程和中间输出。"
 ```
 
 参数含义：
@@ -122,7 +131,14 @@ prompt 模板（保持简短，细节交给 skill 与脚本）：
    **不用自己写日期标题**：publish 会加 `## YYYY-MM-DD HH:MM`、把栏目名统一成固定顺序、
    按顺序排列，并把这条按**时间倒序**插到文档最上面；正文里也不要写落款/日期行
 5. **最终回复 = 日报正文**（cron 任务会用 `--chat-id` 把它发到群）。只有实际处理了
-   Paper Reading 批注时，结尾才附一行处理结果；岗位网页由独立任务发送，不再出现在日报里。
+   Paper Reading 批注时，结尾才附一行处理结果；岗位网页和小红书实习机会都由独立任务发送，
+   不再出现在日报里。
+
+技术实习通过 `jobs-xhs-push` 独立推送：线下岗位只保留 base 成都，远程岗位不限城市；
+方向只保留大模型/Agent、具身智能、AI Infra，内容/商务/运营/产品等非技术岗全部排除；
+目标大厂字节、腾讯、京东、阿里、商汤、OPPO 的岗位排在最前；同日还会搜索这些公司的技术面经，
+面经默认回看一年，抽取文字题目写入《大厂 AI 技术实习面经题库》，群消息只发新增岗位和本轮高频新增考点。
+Webhook 地址放在 `~/.acp-claw/daily-report/jobs-webhook.env` 的 `JOBS_WEBHOOK_URL`，不要写进仓库。
 
    ```text
    📄 Paper Reading：已处理 N 条批注。

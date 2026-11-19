@@ -26,6 +26,10 @@
  *                                                     加 --publish 时把「还没写过的」新增岗位写进飞书文档的
  *                                                     Story 1 基座模型 / Story 2 Ai infra 栏目，并记住已写）
  *   node cli.mjs jobs --web [--keyword ...]          → 渲染 HTML → pagecrypt 加密 → 推到 GitHub Pages（afarfabula.github.io）
+ *   node cli.mjs jobs-xhs-push [--all] [--dry-run] [--json]
+ *                                                    小红书技术实习：base 成都或明确 remote，
+ *                                                    优先字节/腾讯/京东/阿里/商汤/OPPO；
+ *                                                    同步维护大厂面经题库并推送新考点
  *   node cli.mjs publish --file <md> [--doc auto|<url|id>] [--chat <chatId>]
  *                                                    把日报写入飞书文档（默认按月份自动建/找文档）；--chat 时同时发群
  *                                                    写入前会规范化：条目标题 `## YYYY-MM-DD HH:MM`、
@@ -115,6 +119,11 @@ import {
   renderDoc,
   tsOf,
 } from './docfmt.mjs';
+import {
+  formatRunSummary,
+  runJobsXhsPushInBrowser,
+  sendFeishuWebhook,
+} from './jobs-xhs-push.mjs';
 
 function parseArgs(argv) {
   const positional = [];
@@ -1141,6 +1150,49 @@ async function cmdJobs(flags) {
   if (failures.length) process.stderr.write(`[jobs] 失败项: ${failures.join(' | ')}\n`);
 }
 
+/** 小红书技术实习：base 成都或明确 remote，经独立飞书 Webhook 推送。 */
+async function cmdJobsXhsPush(flags) {
+  const { config: cfg } = loadConfig();
+  let result;
+  try {
+    result = await runJobsXhsPushInBrowser(cfg, {
+      all: Boolean(flags.all),
+      dryRun: Boolean(flags['dry-run']),
+      maxAgeDays: Number(flags['max-age-days'] ?? 30),
+      maxDetails: Number(flags['max-details'] ?? 36),
+      maxPushItems: Number(flags['max-items'] ?? 10),
+      log: (message) => process.stderr.write(`${message}\n`),
+    });
+  } catch (error) {
+    if (!flags['dry-run']) {
+      const message = error instanceof Error ? error.message : String(error);
+      await sendFeishuWebhook(`⚠️ 实习机会推送失败\n${message}`).catch(() => {});
+    }
+    throw error;
+  }
+  if (flags.json) {
+    process.stdout.write(`${JSON.stringify({
+      sent: result.sent,
+      dryRun: result.dryRun,
+      searched: result.searched,
+      checked: result.checked,
+      matched: result.matched,
+      selected: result.selected,
+      hidden: result.hidden,
+      interviewSearched: result.interviewSearched,
+      interviewChecked: result.interviewChecked,
+      interviewMatched: result.interviewMatched,
+      questionsNew: result.questionsNew,
+      questionsSelected: result.questionsSelected,
+      bankDocUrl: result.bankDocUrl,
+      failures: [...result.failures, ...result.interviewFailures],
+      message: flags['dry-run'] ? result.message : undefined,
+    }, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`${formatRunSummary(result)}\n`);
+}
+
 const COMMANDS = {
   collect: cmdCollect,
   brief: cmdBrief,
@@ -1150,6 +1202,7 @@ const COMMANDS = {
   mail: cmdMail,
   bill: cmdBill,
   jobs: cmdJobs,
+  'jobs-xhs-push': cmdJobsXhsPush,
   affil: cmdAffil,
   comments: cmdComments,
   reply: cmdReply,

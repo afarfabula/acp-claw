@@ -56,6 +56,11 @@ node $CLI jobs --keyword "大模型,推理"  # 临时改检索关键词
 node $CLI jobs --publish              # 把「还没写过」的新增岗位写进 config.jobs.doc.url 的 Story 栏目
 node $CLI jobs --publish --doc <url>  # 临时指定写入的目标文档
 node $CLI jobs --publish --all        # 忽略「已写/已跳过」记录，整批重写（调试用）
+node $CLI jobs-xhs-push               # 小红书大厂优先技术实习 + 面经题库：base 成都或 remote，
+                                      # 只推 LLM/Agent、具身智能、AI Infra；优先字节/腾讯/京东/阿里/商汤/OPPO
+node $CLI jobs-xhs-push --dry-run --json
+                                      # 只搜索、筛选并打印将要推送的内容，不发 Webhook、不更新去重状态
+node $CLI jobs-xhs-push --all         # 忽略已推送记录，重新推送当前符合条件岗位（首次建立基线时使用）
 node $CLI jobs --search-mode shadow   # Search/Fetch 影子模式（只记录，不并入正式结果）
 node $CLI jobs --search-mode augment  # 把已 Fetch + 语义核验的网页岗位并入正式结果
 node $CLI jobs --no-search            # 临时关闭网页发现
@@ -84,6 +89,11 @@ node $CLI config                      # 查看运行时配置
 - `每日简报`：07:00 完整日报；12:00/18:00 只报新增内容。模型只需运行一次 `brief`、检查
   Paper Reading 批注、写正文、`publish`，不再逐个调度采集命令。
 - `实习岗位网页`：独立每日 18:30 更新一次，不再占用日报时间。
+- `实习机会推送`：独立每日 18:40 搜索小红书技术实习，base 成都或正文明确 remote；方向限定
+  大模型/Agent、具身智能、AI Infra，排除内容/商务/运营/产品岗，经飞书 Webhook 推送；
+  优先字节/腾讯/京东/阿里/商汤/OPPO。同一任务还搜索这 6 家公司的技术面经，抽取文字题目写入
+  《大厂 AI 技术实习面经题库》（默认回看一年），并把新增岗位与考点摘要经 Webhook 推送；不写入日报，
+  也不在触发会话里输出中间过程。
 - `brief` 把新闻/论文的已报记录放在 `state.json` 的 `news.seen` / `papers.seen`（保留 30 天）；
   学校通知和邮件继续用原有增量状态。
 
