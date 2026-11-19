@@ -3092,7 +3092,7 @@ async function boot(){
   switchView('home');
   applyTheme();
 }
-boot();
+window.__bootPromise = boot();
 
 /* 开屏：最长 0.9 秒，点击可跳过 */
 const splashEl = $('splash');
@@ -3107,6 +3107,50 @@ if('serviceWorker' in navigator && (location.protocol==='https:' || ['localhost'
     if(r.ok) navigator.serviceWorker.register('sw.js');
   }).catch(()=>{});
 }
+</script>
+
+<script>
+/* 面经卡组首次加载：使用 ByeByeBaGu 自带解析器和 IndexedDB，不改变 FSRS 学习逻辑。 */
+(() => {
+  const VERSION = "23c44bd6a08d";
+  const DECKS = [{"path":"./decks/AI%20Infra.md","name":"AI Infra.md"},{"path":"./decks/%E5%A4%A7%E6%A8%A1%E5%9E%8B-Agent.md","name":"大模型-Agent.md"}];
+  const SEED_KEY = 'interview_deck_seed_version';
+  const run = async () => {
+    try {
+      await window.__bootPromise;
+      if (localStorage.getItem(SEED_KEY) === VERSION && db.decks.length) return;
+      const importedDeckIds = [];
+      let importedCount = 0;
+      let skippedCount = 0;
+      for (const deck of DECKS) {
+        const response = await fetch(deck.path, { cache: 'no-store' });
+        if (!response.ok) throw new Error('卡组加载失败：' + deck.name);
+        const norm = normalizeText(await response.text());
+        const auto = autoDetect(norm.text);
+        const file = { name: deck.name, norm, strategy: auto.name, level: auto.level, result: null };
+        refreshResult(file);
+        const result = importOne(file, existingHashes(), true);
+        if (result.deck) {
+          importedDeckIds.push(result.deck.id);
+          importedCount += result.kept;
+          skippedCount += result.skipped;
+        }
+      }
+      if (importedCount) {
+        db.lastImport = { deckIds: importedDeckIds, count: importedCount, ts: Date.now() };
+        save();
+        switchView('home');
+        toast(t('已载入面经卡组 {0} 张', importedCount) +
+          (skippedCount ? t('，跳过重复 {0}', skippedCount) : ''));
+      }
+      localStorage.setItem(SEED_KEY, VERSION);
+    } catch (error) {
+      console.warn('[interview-decks]', error);
+    }
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, { once: true });
+  else run();
+})();
 </script>
 </body>
 </html>

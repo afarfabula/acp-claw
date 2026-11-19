@@ -1,7 +1,7 @@
 ﻿/* 八股闪背 Service Worker：缓存优先，支持完全离线使用。
    改版后想强制更新缓存，把 CACHE 常量的版本号 +1 即可。 */
-const CACHE = 'shanbei-v29';
-const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon.svg'];
+const CACHE = 'shanbei-v29-interview-23c44bd6a08d';
+const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg", "./decks/AI%20Infra.md", "./decks/%E5%A4%A7%E6%A8%A1%E5%9E%8B-Agent.md"];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
