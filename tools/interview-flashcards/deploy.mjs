@@ -2,11 +2,13 @@
 // 将 ByeByeBaGu 和生成卡组发布到 acp-claw 仓库 gh-pages 分支的 /memory/。
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   writeFileSync,
@@ -66,6 +68,80 @@ code{background:#edf1ed;padding:2px 6px;border-radius:5px}
   writeFileSync(join(memoryDir, 'decks.html'), html, 'utf8');
 }
 
+function writeDeckBootstrap(memoryDir, deckFiles) {
+  const indexPath = join(memoryDir, 'index.html');
+  const swPath = join(memoryDir, 'sw.js');
+  let html = readFileSync(indexPath, 'utf8');
+  let sw = readFileSync(swPath, 'utf8');
+  const deckPayload = deckFiles.map((file) => ({
+    path: `./decks/${encodeURIComponent(file)}`,
+    name: file,
+  }));
+  const version = createHash('sha256')
+    .update(JSON.stringify(deckPayload))
+    .update(deckFiles.map((file) => readFileSync(join(memoryDir, 'decks', file), 'utf8')).join('\u0000'))
+    .digest('hex')
+    .slice(0, 12);
+
+  html = html.replace(/\nboot\(\);\n/, '\nwindow.__bootPromise = boot();\n');
+  if (!html.includes('window.__bootPromise = boot();')) {
+    throw new Error('无法注入 ByeByeBaGu 启动钩子');
+  }
+  const bootstrap = `
+<script>
+/* 面经卡组首次加载：使用 ByeByeBaGu 自带解析器和 IndexedDB，不改变 FSRS 学习逻辑。 */
+(() => {
+  const VERSION = ${JSON.stringify(version)};
+  const DECKS = ${JSON.stringify(deckPayload)};
+  const SEED_KEY = 'interview_deck_seed_version';
+  const run = async () => {
+    try {
+      await window.__bootPromise;
+      if (localStorage.getItem(SEED_KEY) === VERSION && db.decks.length) return;
+      const importedDeckIds = [];
+      let importedCount = 0;
+      let skippedCount = 0;
+      for (const deck of DECKS) {
+        const response = await fetch(deck.path, { cache: 'no-store' });
+        if (!response.ok) throw new Error('卡组加载失败：' + deck.name);
+        const norm = normalizeText(await response.text());
+        const auto = autoDetect(norm.text);
+        const file = { name: deck.name, norm, strategy: auto.name, level: auto.level, result: null };
+        refreshResult(file);
+        const result = importOne(file, existingHashes(), true);
+        if (result.deck) {
+          importedDeckIds.push(result.deck.id);
+          importedCount += result.kept;
+          skippedCount += result.skipped;
+        }
+      }
+      if (importedCount) {
+        db.lastImport = { deckIds: importedDeckIds, count: importedCount, ts: Date.now() };
+        save();
+        switchView('home');
+        toast(t('已载入面经卡组 {0} 张', importedCount) +
+          (skippedCount ? t('，跳过重复 {0}', skippedCount) : ''));
+      }
+      localStorage.setItem(SEED_KEY, VERSION);
+    } catch (error) {
+      console.warn('[interview-decks]', error);
+    }
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, { once: true });
+  else run();
+})();
+</script>`;
+  html = html.replace('</body>', `${bootstrap}\n</body>`);
+  writeFileSync(indexPath, html, 'utf8');
+
+  const cacheVersion = `shanbei-v29-interview-${version}`;
+  sw = sw.replace(/const CACHE = '[^']+';/, `const CACHE = '${cacheVersion}';`);
+  const assetList = JSON.stringify(['./', './index.html', './manifest.webmanifest', './icon.svg', ...deckPayload.map((x) => x.path)])
+    .replaceAll(',', ', ');
+  sw = sw.replace(/const ASSETS = \[[^\]]*\];/, `const ASSETS = ${assetList};`);
+  writeFileSync(swPath, sw, 'utf8');
+}
+
 export function deployMemorySite({ upstreamDir = UPSTREAM_DIR, deckDir = DECK_DIR } = {}) {
   if (!existsSync(join(upstreamDir, 'index.html'))) {
     throw new Error(`ByeByeBaGu 未找到：${upstreamDir}`);
@@ -107,6 +183,7 @@ export function deployMemorySite({ upstreamDir = UPSTREAM_DIR, deckDir = DECK_DI
     for (const file of deckFiles) {
       cpSync(join(deckDir, file), join(targetDecks, file));
     }
+    writeDeckBootstrap(memoryDir, deckFiles);
     writeHub(memoryDir, deckFiles);
 
     sh('git', ['add', 'memory'], { cwd: repoDir });

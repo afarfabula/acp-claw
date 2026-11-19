@@ -8,6 +8,9 @@
 3. 生成大模型/Agent、具身智能、AI Infra 三个 Markdown 卡组；
 4. 将 ByeByeBaGu 与卡组发布到 `acp-claw` 仓库的 `gh-pages` 分支 `/memory/`。
 
+发布时会注入一个很小的首屏引导：新浏览器首次打开时，自动调用 ByeByeBaGu 自带解析器导入卡组；
+已有学习进度不会重置。卡组版本变化时会只补新卡，按语义去重。
+
 ## 命令
 
 ```bash
